@@ -40,37 +40,19 @@ def _post_with_retry(
     payload: dict[str, Any],
     provider: str,
 ) -> httpx.Response | None:
-    """Sends HTTP POST request with exponential backoff on retriable errors."""
-    for attempt in range(3):
-        try:
-            response = client.post(url, headers=headers, json=payload)
-        except httpx.HTTPError as exc:
-            logger.warning("%s request network error: %s", provider, exc.__class__.__name__)
-            if attempt < 2:
-                time.sleep(1.5 ** attempt)
-                continue
-            return None
-
-        if response.status_code == 200:
-            return response
-
-        # Retriable server / rate-limit errors
-        if response.status_code in {429, 500, 502, 503, 504} and attempt < 2:
-            sleep_sec = 2 ** attempt
-            logger.warning(
-                "%s returned HTTP %s (rate-limited or busy). Retrying in %ss...",
-                provider,
-                response.status_code,
-                sleep_sec,
-            )
-            time.sleep(sleep_sec)
-            continue
-
-        logger.warning(
-            "%s returned HTTP %s: %s", provider, response.status_code, response.text[:250]
-        )
+    """Sends HTTP POST request with quick retry on retriable errors."""
+    try:
+        response = client.post(url, headers=headers, json=payload)
+    except httpx.HTTPError as exc:
+        logger.warning("%s request network error: %s", provider, exc.__class__.__name__)
         return None
 
+    if response.status_code == 200:
+        return response
+
+    logger.warning(
+        "%s returned HTTP %s: %s", provider, response.status_code, response.text[:200]
+    )
     return None
 
 
@@ -234,7 +216,7 @@ def generate_json(
     Attempts JSON generation via Gemini, falling back to Groq, then OpenRouter.
     Returns parsed dictionary or None if all providers fail.
     """
-    with httpx.Client(timeout=20.0) as client:
+    with httpx.Client(timeout=8.0) as client:
         # 1. Primary: Gemini
         raw_gemini = _gemini_generate(client, settings, system, user, json_mode=True, temperature=temperature)
         if raw_gemini:
@@ -270,7 +252,7 @@ def generate_text(
     Attempts free-form text generation via Gemini, falling back to Groq, then OpenRouter.
     Returns generated string or None if all providers fail.
     """
-    with httpx.Client(timeout=20.0) as client:
+    with httpx.Client(timeout=8.0) as client:
         # 1. Primary: Gemini
         res = _gemini_generate(client, settings, system, user, json_mode=False, temperature=temperature)
         if res:

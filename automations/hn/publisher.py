@@ -39,6 +39,13 @@ class HNPublisher:
         if self.cookie:
             self.client.cookies.set("user", self.cookie, domain="news.ycombinator.com")
 
+    def _get_state_file(self) -> Path:
+        raw_dir = getattr(self.settings, "state_dir", "state") if self.settings else "state"
+        p = Path(raw_dir)
+        if p.is_dir() or not p.suffix:
+            return p / "hn_state.json"
+        return p
+
     def is_logged_in(self) -> bool:
         """Verifies if the current session is logged in to Hacker News."""
         try:
@@ -86,9 +93,10 @@ class HNPublisher:
                 # Save session cookie to state
                 cookie_val = resp_cookies.get("user") or self.client.cookies.get("user")
                 if cookie_val:
-                    state = load_state(self.settings.state_dir)
+                    state_path = self._get_state_file()
+                    state = load_state(state_path)
                     state["hn_cookie"] = cookie_val
-                    save_state(self.settings.state_dir, state)
+                    save_state(state_path, state)
                 return True
             else:
                 logger.error("Hacker News login failed. Bad credentials or account not found.")

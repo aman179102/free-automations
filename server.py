@@ -32,15 +32,15 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
             if hasattr(runner, "run_hiring_radar"):
                 runner.run_hiring_radar(settings)
                 return True
-        elif action in ("discussion", "hn_discussion"):
+        elif action in ("discussion", "hn_discussion", "comment"):
             if hasattr(runner, "run_discussion"):
-                runner.run_discussion(settings)
+                runner.run_discussion(settings, mode="all")
                 return True
         elif action in ("showcase", "hn_showcase"):
             if hasattr(runner, "run_showcase"):
                 runner.run_showcase(settings)
                 return True
-        elif action in ("all", "hn_all"):
+        elif action in ("all", "hn_all", "run"):
             if hasattr(runner, "run_all"):
                 runner.run_all(settings)
                 return True
@@ -52,6 +52,75 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
 
     logger.warning("Unrecognized action or runner method: %s", action)
     return False
+
+
+def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
+    """Processes incoming Telegram webhook message asynchronously in a worker thread."""
+    message = body_data.get("message", {})
+    text = message.get("text", "").strip()
+    if not text:
+        return
+
+    if text.startswith("/hiring"):
+        send_telegram_message(settings, "🎯 <b>[Hiring Radar Triggered]</b> Scanning latest Who is Hiring thread...")
+        _dispatch_automation_job("hiring", settings)
+    elif text.startswith("/discussion") or text.startswith("/comment"):
+        send_telegram_message(settings, "🧠 <b>[Comment Engine Triggered]</b> Discovering popular & rising threads...")
+        _dispatch_automation_job("discussion", settings)
+    elif text.startswith("/showcase"):
+        send_telegram_message(settings, "🚀 <b>[Show HN Triggered]</b> Submitting next open-source project...")
+        _dispatch_automation_job("showcase", settings)
+    elif text.startswith("/all") or text.startswith("/run"):
+        send_telegram_message(settings, "⚡ <b>[Full Auto-Pilot Triggered]</b> Running complete Hacker News automation suite...")
+        _dispatch_automation_job("all", settings)
+    elif text.startswith("/status"):
+        user_str = settings.hn_username or "Unconfigured"
+        auto_str = "Active (Auto-Pilot)" if settings.hn_auto_publish else "Dry-Run"
+
+        is_logged = False
+        try:
+            from automations.hn.publisher import HNPublisher
+            pub = HNPublisher(settings)
+            is_logged = pub.is_logged_in()
+        except Exception:
+            pass
+        login_str = "✅ Active & Authenticated" if is_logged else "❌ Session Inactive"
+
+        karma_str = "N/A"
+        try:
+            from automations.hn.api import HNAPIClient
+            api = HNAPIClient()
+            user_info = api.get_user(settings.hn_username) if settings.hn_username else None
+            if user_info and "karma" in user_info:
+                karma_str = str(user_info["karma"])
+        except Exception:
+            pass
+
+        status_msg = (
+            f"📊 <b>[HACKER NEWS SERVER STATUS]</b>\n\n"
+            f"👤 <b>HN Account:</b> <code>{user_str}</code>\n"
+            f"⭐ <b>Account Karma:</b> <code>{karma_str}</code>\n"
+            f"🔐 <b>Login Status:</b> {login_str}\n"
+            f"🚀 <b>Auto-Publish Mode:</b> <code>{auto_str}</code>\n\n"
+            f"⚙️ <b>Available Commands:</b>\n"
+            f"• /run - Trigger full autonomous cycle\n"
+            f"• /comment - Comment on popular & rising posts\n"
+            f"• /showcase - Submit next Show HN post\n"
+            f"• /hiring - Scan monthly Who is Hiring radar\n"
+            f"• /status - View this live status report"
+        )
+        send_telegram_message(settings, status_msg)
+    elif text.startswith("/start") or text.startswith("/help"):
+        help_text = (
+            "🤖 <b>Free-Automations 100% Autonomous Server</b>\n\n"
+            "Available Auto-Pilot commands (Zero Buttons Needed):\n"
+            "• /run - Trigger full autonomous cycle (comments + showcase + hiring)\n"
+            "• /comment - Discover popular & rising posts and comment\n"
+            "• /showcase - Autonomously publish Show HN post\n"
+            "• /hiring - Scan HN Who is Hiring & match remote roles\n"
+            "• /status - Live HN account karma & server health check"
+        )
+        send_telegram_message(settings, help_text)
 
 
 class AutomationHandler(BaseHTTPRequestHandler):
@@ -123,34 +192,19 @@ class AutomationHandler(BaseHTTPRequestHandler):
         elif path in ("/trigger/hn/all", "/trigger/all", "/trigger_all"):
             action = "all"
         elif path in ("/webhook", "/telegram_webhook"):
-            # Telegram Webhook endpoint
+            # Telegram Webhook endpoint - respond immediately with 200 OK
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"status": "ok"}')
 
             if body_data:
-                # Process Telegram message command in background
-                message = body_data.get("message", {})
-                text = message.get("text", "").strip()
-                if text.startswith("/hiring"):
-                    threading.Thread(target=_dispatch_automation_job, args=("hiring", self.settings), daemon=True).start()
-                elif text.startswith("/discussion"):
-                    threading.Thread(target=_dispatch_automation_job, args=("discussion", self.settings), daemon=True).start()
-                elif text.startswith("/showcase"):
-                    threading.Thread(target=_dispatch_automation_job, args=("showcase", self.settings), daemon=True).start()
-                elif text.startswith("/all"):
-                    threading.Thread(target=_dispatch_automation_job, args=("all", self.settings), daemon=True).start()
-                elif text.startswith("/start") or text.startswith("/help"):
-                    help_text = (
-                        "🤖 <b>Free-Automations Mobile Co-Pilot</b>\n\n"
-                        "Available commands:\n"
-                        "• /hiring - Scan HN Who is Hiring & draft remote outreach\n"
-                        "• /discussion - Find Ask HN questions & draft technical answers\n"
-                        "• /showcase - Draft Show HN posts for open-source systems\n"
-                        "• /all - Run full automation scan"
-                    )
-                    send_telegram_message(self.settings, help_text)
+                # Process Telegram message command in background worker thread
+                threading.Thread(
+                    target=_handle_telegram_webhook_async,
+                    args=(body_data, self.settings),
+                    daemon=True,
+                ).start()
             return
 
         if action:

@@ -57,6 +57,11 @@ ARCHITECTURE_TOPICS = {
         "category": "Linux Internals, Networking & Cloud Infrastructure",
         "key_tradeoffs": "Kubernetes orchestration vs single-node compose/systemd simplicity. eBPF provides kernel-level observability and socket bypass without context-switch overhead.",
     },
+    "languages_runtimes": {
+        "keywords": ["rust", "golang", "go runtime", "python", "php", "c++", "zig", "memory safety", "compiler", "jit", "garbage collection", "gc pause", "runtime"],
+        "category": "Languages, Compilers & Runtime Systems",
+        "key_tradeoffs": "Tradeoffs between tracing GC runtimes vs reference counting vs zero-overhead static ownership (Rust).",
+    },
 }
 
 SYSTEMS_PROMPT = """You are a Principal Systems & Infrastructure Architect responding to an Ask HN question.
@@ -93,8 +98,6 @@ def score_discussion_candidate(story: HNStory, allow_general: bool = False) -> t
             matched_tags = matches
 
     if max_matches == 0:
-        if allow_general and (is_ask_hn or story.score >= 50):
-            return 15.0, "General Software Engineering", []
         return 0.0, best_category, []
 
     # Score calculation based on matches, score, and discussion freshness
@@ -208,6 +211,14 @@ def draft_architect_response(
             f"DNS resolution, or garbage collection pauses."
         )
 
+    if "Languages" in cat or "Runtime" in cat:
+        return (
+            f"From a systems runtime perspective, language and runtime evolution at this layer usually comes down to memory management and compiler optimizations:\n\n"
+            f"1. Memory Model & GC Overhead: Tracing GC runtimes (Go, Java) prioritize concurrent throughput at the cost of heap overhead, while reference-counting runtimes with cycle collectors (Python, PHP) provide prompt deterministic destructor cleanup at the cost of reference mutation overhead.\n\n"
+            f"2. JIT vs Ahead-of-Time (AOT): Dynamic execution allows runtime profiling optimizations (inline caching and trace JIT), but introduces warmup latency and non-deterministic memory spikes compared to static binary compilation.\n\n"
+            f"3. Concurrency Primitive Integration: How cleanly the language runtime multiplexes user-space tasks (fibers, green threads, or async event loops) across kernel OS threads without starving blocking system calls."
+        )
+
     # General Systems Scaling
     return (
         f"In system design at this stage, the rule of thumb is to design for operational simplicity until data boundaries dictate splitting:\n\n"
@@ -261,7 +272,7 @@ class DiscussionEngine:
                     topic.draft_response = draft_architect_response(
                         topic,
                         author_name=self.author_name,
-                        settings=self.settings,
+                        settings=None,
                     )
                     topics.append(topic)
 
@@ -286,7 +297,7 @@ class DiscussionEngine:
                 topic.draft_response = draft_architect_response(
                     topic,
                     author_name=self.author_name,
-                    settings=self.settings,
+                    settings=None,
                 )
                 topics.append(topic)
 
@@ -305,6 +316,8 @@ class DiscussionEngine:
         # Fetch current top stories from Firebase
         top_ids = self.api.fetch_topstories(limit=35)
         for story_id in top_ids:
+            if len(topics) >= limit:
+                break
             if story_id in seen_ids:
                 continue
             seen_ids.add(story_id)
@@ -323,7 +336,7 @@ class DiscussionEngine:
                 topic.draft_response = draft_architect_response(
                     topic,
                     author_name=self.author_name,
-                    settings=self.settings,
+                    settings=None,
                 )
                 topics.append(topic)
 
@@ -345,6 +358,8 @@ class DiscussionEngine:
         candidate_ids = list(dict.fromkeys(new_ids + ask_ids))
 
         for story_id in candidate_ids:
+            if len(topics) >= limit:
+                break
             if story_id in seen_ids:
                 continue
             seen_ids.add(story_id)
@@ -367,7 +382,7 @@ class DiscussionEngine:
                 topic.draft_response = draft_architect_response(
                     topic,
                     author_name=self.author_name,
-                    settings=self.settings,
+                    settings=None,
                 )
                 topics.append(topic)
 
