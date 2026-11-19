@@ -118,29 +118,31 @@ class TumblrRunner:
             except Exception as exc:
                 logger.error("Tumblr publish_post execution failed: %s", exc)
 
-        # Build informative Telegram notification
-        title_escaped = html.escape(candidate.title)
-        tags_str = ", ".join(f"#{t}" for t in candidate.tags[:5])
-        blog_clean = self.client.blog_name or "My Tumblr Blog"
+        # Build informative Telegram notification ONLY when live, or explicit manual dry run
+        should_notify = posted_live or (not is_auto and not force)
+        if should_notify:
+            title_escaped = html.escape(candidate.title)
+            tags_str = ", ".join(f"#{t}" for t in candidate.tags[:5])
+            blog_clean = self.client.blog_name or "My Tumblr Blog"
 
-        status_badge = "🚀 <b>[AUTONOMOUSLY POSTED TO TUMBLR]</b>" if posted_live else "🎨 <b>TUMBLR TECH POST (DRY RUN)</b>"
-        msg_parts = [
-            status_badge,
-            f"📌 <b>Title:</b> {title_escaped}",
-            f"🏷️ <b>Tags:</b> <code>{html.escape(tags_str)}</code>",
-            f"🏢 <b>Blog:</b> <code>{html.escape(blog_clean)}</code>",
-        ]
-        if post_url:
-            msg_parts.append(f"🔗 <b>Direct Link:</b> {post_url}")
-        msg_parts.append(f"\n📄 <b>Post Summary:</b>\n\n{html.escape(candidate.body[:350])}...")
+            status_badge = "🚀 <b>[AUTONOMOUSLY POSTED TO TUMBLR]</b>" if posted_live else "🎨 <b>TUMBLR TECH POST (DRY RUN)</b>"
+            msg_parts = [
+                status_badge,
+                f"📌 <b>Title:</b> {title_escaped}",
+                f"🏷️ <b>Tags:</b> <code>{html.escape(tags_str)}</code>",
+                f"🏢 <b>Blog:</b> <code>{html.escape(blog_clean)}</code>",
+            ]
+            if post_url:
+                msg_parts.append(f"🔗 <b>Direct Link:</b> {post_url}")
+            msg_parts.append(f"\n📄 <b>Post Summary:</b>\n\n{html.escape(candidate.body[:350])}...")
 
-        message_text = "\n".join(msg_parts)
-        keyboard_rows = []
-        if post_url:
-            keyboard_rows.append([{"text": "🌐 View on Tumblr", "url": post_url}])
-        reply_markup = build_inline_keyboard(keyboard_rows) if (build_inline_keyboard and keyboard_rows) else None
+            message_text = "\n".join(msg_parts)
+            keyboard_rows = []
+            if post_url:
+                keyboard_rows.append([{"text": "🌐 View on Tumblr", "url": post_url}])
+            reply_markup = build_inline_keyboard(keyboard_rows) if (build_inline_keyboard and keyboard_rows) else None
 
-        self._dispatch_telegram(message_text, reply_markup=reply_markup)
+            self._dispatch_telegram(message_text, reply_markup=reply_markup)
         record_action(state, "tumblr_post", {"title": candidate.title, "live": posted_live, "post_id": post_id})
         self._save_state(state)
 
@@ -175,20 +177,23 @@ class TumblrRunner:
                 logger.error("Tumblr publish_reblog execution failed: %s", exc)
 
         # Dispatch Telegram notification
-        status_badge = "🔄 <b>[AUTONOMOUSLY REBLOGGED ON TUMBLR]</b>" if posted_live else "💡 <b>TUMBLR REBLOG MATCH (DRY RUN)</b>"
-        msg_parts = [
-            status_badge,
-            f"🔗 <b>Original Post:</b> {candidate.post_url or f'Post #{candidate.post_id}'}",
-            f"🏷️ <b>Tags:</b> <code>{html.escape(', '.join(candidate.tags))}</code>",
-            f"\n💬 <b>Your Added Commentary:</b>\n<i>\"{html.escape(candidate.comment)}\"</i>",
-        ]
-        message_text = "\n".join(msg_parts)
-        keyboard_rows = []
-        if candidate.post_url:
-            keyboard_rows.append([{"text": "🔗 View Original Post", "url": candidate.post_url}])
-        reply_markup = build_inline_keyboard(keyboard_rows) if (build_inline_keyboard and keyboard_rows) else None
+        # Dispatch Telegram notification ONLY when live, or explicit manual dry run
+        should_notify = posted_live or (not getattr(self.settings, "tumblr_auto_publish", False) and not force)
+        if should_notify:
+            status_badge = "🔄 <b>[AUTONOMOUSLY REBLOGGED ON TUMBLR]</b>" if posted_live else "💡 <b>TUMBLR REBLOG MATCH (DRY RUN)</b>"
+            msg_parts = [
+                status_badge,
+                f"🔗 <b>Original Post:</b> {candidate.post_url or f'Post #{candidate.post_id}'}",
+                f"🏷️ <b>Tags:</b> <code>{html.escape(', '.join(candidate.tags))}</code>",
+                f"\n💬 <b>Your Added Commentary:</b>\n<i>\"{html.escape(candidate.comment)}\"</i>",
+            ]
+            message_text = "\n".join(msg_parts)
+            keyboard_rows = []
+            if candidate.post_url:
+                keyboard_rows.append([{"text": "🔗 View Original Post", "url": candidate.post_url}])
+            reply_markup = build_inline_keyboard(keyboard_rows) if (build_inline_keyboard and keyboard_rows) else None
 
-        self._dispatch_telegram(message_text, reply_markup=reply_markup)
+            self._dispatch_telegram(message_text, reply_markup=reply_markup)
         record_action(state, "tumblr_reblog", {"target_post_id": candidate.post_id, "live": posted_live})
         self._save_state(state)
 

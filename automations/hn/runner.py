@@ -117,58 +117,34 @@ class HNRunner:
         for lead in new_leads:
             self._mark_seen(state, lead.id, key="seen_hiring_ids")
 
-            if send_telegram and self.settings and getattr(self.settings, "has_telegram", False):
-                # Build rich HTML message
+        # Consolidate into a SINGLE digest message to avoid Telegram flood
+        if send_telegram and new_leads and self.settings and getattr(self.settings, "has_telegram", False):
+            msg_parts = [
+                f"🎯 <b>[HN HIRING RADAR] {len(new_leads)} New Remote Lead(s) Found</b>\n",
+            ]
+            for i, lead in enumerate(new_leads[:4], 1):
                 company_escaped = html.escape(lead.company or "Startup")
                 role_escaped = html.escape(lead.role or "Software Engineer")
-                contact_escaped = html.escape(lead.founder_or_contact or "Founder/Lead")
-                tech_str = ", ".join(lead.matched_keywords) or "Go, Python, FastAPI"
-                pitch_escaped = html.escape(lead.pitch_draft or "")
+                tech_str = ", ".join(lead.matched_keywords[:3]) if lead.matched_keywords else "Systems/AI"
+                hn_link = f"https://news.ycombinator.com/item?id={lead.id}"
 
-                msg_parts = [
-                    f"🎯 <b>HN 100% REMOTE HIRING LEAD</b>",
-                    f"🏢 <b>Company:</b> {company_escaped}",
-                    f"💼 <b>Role:</b> {role_escaped}",
-                    f"🌐 <b>Location:</b> <code>100% Remote</code>",
-                    f"🛠️ <b>Tech Stack:</b> <code>{tech_str}</code>",
-                    f"👤 <b>Contact:</b> {contact_escaped}",
-                ]
+                lead_line = f"<b>{i}. {company_escaped}</b> — {role_escaped}\n🛠️ <code>{html.escape(tech_str)}</code>"
                 if lead.email:
-                    msg_parts.append(f"✉️ <b>Email:</b> <code>{html.escape(lead.email)}</code>")
-
-                msg_parts.append(f"\n📝 <b>Tailored Outreach Pitch:</b>\n<i>{pitch_escaped}</i>")
-
-                message_text = "\n".join(msg_parts)
-
-                # Build buttons
-                keyboard_rows = []
-                # First row: HN comment link & mailto intent
-                first_row = []
-                if build_hn_button:
-                    first_row.append(build_hn_button(lead.id, "🧡 Open on HN"))
-                if lead.email and build_mailto_button:
-                    first_row.append(
-                        build_mailto_button(
-                            email=lead.email,
-                            subject=f"Application: {lead.role} - Aman Kumar",
-                            body=lead.pitch_draft or "",
-                            text="✉️ 1-Tap Email",
-                        )
-                    )
-                if first_row:
-                    keyboard_rows.append(first_row)
-
-                # Second row: Apply URL / GitHub
-                second_row = []
+                    lead_line += f" | <code>{html.escape(lead.email)}</code>"
                 if lead.apply_url:
-                    second_row.append({"text": "🔗 Apply Page", "url": lead.apply_url})
-                if build_github_button:
-                    second_row.append(build_github_button(text="🐙 Aman's GitHub"))
-                if second_row:
-                    keyboard_rows.append(second_row)
+                    lead_line += f"\n🔗 <a href=\"{lead.apply_url}\">Apply Link</a>"
+                lead_line += f" | <a href=\"{hn_link}\">HN Lead</a>\n"
+                msg_parts.append(lead_line)
 
-                reply_markup = build_inline_keyboard(keyboard_rows) if build_inline_keyboard else None
-                self._dispatch_telegram(message_text, reply_markup=reply_markup)
+            message_text = "\n".join(msg_parts)
+            keyboard_rows = [
+                [
+                    {"text": "🧡 View Hiring Thread", "url": f"https://news.ycombinator.com/item?id={target_thread_id}" if target_thread_id else "https://news.ycombinator.com"},
+                    {"text": "🐙 Aman's GitHub", "url": "https://github.com/aman179102"},
+                ]
+            ]
+            reply_markup = build_inline_keyboard(keyboard_rows) if build_inline_keyboard else None
+            self._dispatch_telegram(message_text, reply_markup=reply_markup)
 
         if record_action:
             record_action(
@@ -267,7 +243,10 @@ class HNRunner:
                     except Exception as exc:
                         logger.warning("Auto-publish comment error on #%d: %s", topic.story.id, exc)
 
-            if send_telegram and self.settings and getattr(self.settings, "has_telegram", False):
+            # Only send Telegram message if an actual comment was posted live!
+            # (In dry-run mode, send at most 1 example to prevent message spam)
+            should_notify = posted_live or (not is_auto and send_telegram)
+            if should_notify and self.settings and getattr(self.settings, "has_telegram", False):
                 title_escaped = html.escape(topic.story.title)
                 cat_escaped = html.escape(topic.category)
                 reply_escaped = html.escape(topic.draft_response)
@@ -292,6 +271,9 @@ class HNRunner:
                 ]
                 reply_markup = build_inline_keyboard(keyboard_rows) if build_inline_keyboard else None
                 self._dispatch_telegram(message_text, reply_markup=reply_markup)
+
+                if not posted_live:
+                    break  # In dry run mode, stop after 1 notification
 
         if record_action:
             record_action(
@@ -375,7 +357,10 @@ class HNRunner:
                     except Exception as exc:
                         logger.warning("Auto-publish Show HN error: %s", exc)
 
-            if send_telegram and self.settings and getattr(self.settings, "has_telegram", False):
+            # Only notify if story was actually submitted live!
+            # (In dry run mode, only notify if user manually requested it)
+            should_notify = bool(submitted_url) or (not is_auto and send_telegram)
+            if should_notify and self.settings and getattr(self.settings, "has_telegram", False):
                 title_escaped = html.escape(proj.suggested_title)
                 body_escaped = html.escape(proj.body_markdown)
 
@@ -405,6 +390,9 @@ class HNRunner:
                 ]
                 reply_markup = build_inline_keyboard(keyboard_rows) if build_inline_keyboard else None
                 self._dispatch_telegram(message_text, reply_markup=reply_markup)
+
+                if not submitted_url:
+                    break  # In dry run mode, only send 1 draft example
 
         if record_action:
             record_action(
