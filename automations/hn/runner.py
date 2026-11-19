@@ -9,6 +9,7 @@ import html
 import logging
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -220,10 +221,16 @@ class HNRunner:
         else:
             is_auto = bool(auto_publish)
 
-        # Anti-spam cooldown gate: minimum 30 minutes between automated comments
-        min_comment_interval = 1800  # 30 minutes
+        # Ultra-safe anti-ban cooldown gate: minimum 45 minutes between automated comments
+        min_comment_interval = 2700  # 45 minutes
         last_comment_ts = float(state.get("hn_last_comment_at", 0) or 0)
         now = time.time()
+
+        # Check daily comments limit (max 4 per 24 hours to prevent spam heuristics)
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        daily_comments: dict[str, int] = state.setdefault("hn_daily_comments", {})
+        daily_count = daily_comments.get(today_str, 0)
+        max_daily_comments = 4
 
         for topic in new_topics:
             self._mark_seen(state, topic.story.id, key="seen_discussion_ids")
@@ -231,7 +238,14 @@ class HNRunner:
             posted_live = False
             if is_auto:
                 time_since_last = now - last_comment_ts
-                if last_comment_ts > 0 and time_since_last < min_comment_interval:
+                if daily_count >= max_daily_comments:
+                    logger.info(
+                        "Daily comment limit reached (%d/%d today). Skipping auto-comment on #%d to preserve account safety.",
+                        daily_count,
+                        max_daily_comments,
+                        topic.story.id,
+                    )
+                elif last_comment_ts > 0 and time_since_last < min_comment_interval:
                     wait_mins = int((min_comment_interval - time_since_last) / 60)
                     logger.info(
                         "Comment cooldown active (last comment %ds ago). Skipping auto-comment on #%d to avoid rate-limits (ready in ~%dm).",
@@ -247,6 +261,8 @@ class HNRunner:
                         if posted_live:
                             last_comment_ts = now
                             state["hn_last_comment_at"] = now
+                            daily_count += 1
+                            daily_comments[today_str] = daily_count
                             state["hn_comments_posted_count"] = int(state.get("hn_comments_posted_count", 0)) + 1
                     except Exception as exc:
                         logger.warning("Auto-publish comment error on #%d: %s", topic.story.id, exc)
@@ -255,18 +271,27 @@ class HNRunner:
                 title_escaped = html.escape(topic.story.title)
                 cat_escaped = html.escape(topic.category)
                 reply_escaped = html.escape(topic.draft_response)
+                hn_link = f"https://news.ycombinator.com/item?id={topic.story.id}"
 
                 status_badge = "🚀 <b>[AUTONOMOUSLY POSTED TO HN]</b>" if posted_live else "🧠 <b>HN DISCUSSION MATCH (DRY RUN)</b>"
                 msg_parts = [
                     status_badge,
-                    f"📌 <b>Title:</b> {title_escaped}",
+                    f"📌 <b>Story:</b> <a href=\"{hn_link}\">{title_escaped}</a>",
                     f"🏷️ <b>Category:</b> <code>{cat_escaped}</code>",
                     f"⭐ <b>Score:</b> {topic.story.score} pts | 💬 {topic.story.descendants} comments",
-                    f"🔗 <b>HN Story:</b> https://news.ycombinator.com/item?id={topic.story.id}",
-                    f"\n💡 <b>Senior Systems Architecture Response:</b>\n\n{reply_escaped}",
+                    f"🔗 <b>Direct Link:</b> {hn_link}",
+                    f"\n💬 <b>Your Posted Comment:</b>\n\n{reply_escaped}",
                 ]
                 message_text = "\n".join(msg_parts)
-                self._dispatch_telegram(message_text)
+
+                keyboard_rows = [
+                    [
+                        {"text": "🧡 View on Hacker News", "url": hn_link},
+                        {"text": "🐙 Aman's GitHub", "url": "https://github.com/aman179102"},
+                    ]
+                ]
+                reply_markup = build_inline_keyboard(keyboard_rows) if build_inline_keyboard else None
+                self._dispatch_telegram(message_text, reply_markup=reply_markup)
 
         if record_action:
             record_action(
@@ -371,7 +396,15 @@ class HNRunner:
                     f"\n📄 <b>Post Submission Text:</b>\n\n{body_escaped}",
                 ]
                 message_text = "\n".join(msg_parts)
-                self._dispatch_telegram(message_text)
+
+                keyboard_rows = [
+                    [
+                        {"text": "🧡 View on Hacker News", "url": submitted_url or "https://news.ycombinator.com/show"},
+                        {"text": "🐙 GitHub Repo", "url": proj.github_url},
+                    ]
+                ]
+                reply_markup = build_inline_keyboard(keyboard_rows) if build_inline_keyboard else None
+                self._dispatch_telegram(message_text, reply_markup=reply_markup)
 
         if record_action:
             record_action(

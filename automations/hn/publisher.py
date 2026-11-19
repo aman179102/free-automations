@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -145,6 +147,11 @@ class HNPublisher:
             hmac_val = str(hmac_input.get("value", ""))
             parent_val = str(parent_input.get("value", str(item_id)))
 
+            # Human-like typing delay to avoid sub-second bot detection
+            delay = random.uniform(3.5, 7.5)
+            logger.info("Natural typing pause (%.1fs) before submitting comment on #%d...", delay, item_id)
+            time.sleep(delay)
+
             # 2. Submit the comment
             comment_resp = self.client.post(
                 f"{HN_BASE_URL}/comment",
@@ -204,6 +211,11 @@ class HNPublisher:
                 "url": url,
                 "text": text,
             }
+
+            # Human-like typing delay to avoid sub-second bot detection
+            delay = random.uniform(5.0, 10.0)
+            logger.info("Natural pause (%.1fs) before submitting Show HN story...", delay)
+            time.sleep(delay)
 
             post_resp = self.client.post(f"{HN_BASE_URL}/r", data=submit_data)
             if getattr(post_resp, "status_code", 0) in (200, 302):

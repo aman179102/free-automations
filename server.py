@@ -236,6 +236,30 @@ class AutomationHandler(BaseHTTPRequestHandler):
         logger.info("%s - %s", self.address_string(), format % args)
 
 
+def _background_scheduler(settings: Settings) -> None:
+    """Internal autonomous schedule loop: triggers full auto-pilot periodically."""
+    import time
+
+    # Startup warm-up delay (15 seconds after server boots)
+    logger.info("⏰ [Autonomous Scheduler] Daemon active. Initial auto-pilot cycle will run in 15 seconds...")
+    time.sleep(15)
+    logger.info("⏰ [Autonomous Scheduler] Running startup auto-pilot cycle...")
+    try:
+        _dispatch_automation_job("all", settings)
+    except Exception as exc:
+        logger.error("Error in initial startup automation: %s", exc)
+
+    # Periodic interval: every 3 hours (10,800 seconds)
+    interval_secs = 10800
+    while True:
+        try:
+            time.sleep(interval_secs)
+            logger.info("⏰ [Autonomous Scheduler] Executing scheduled 3-hour auto-pilot cycle...")
+            _dispatch_automation_job("all", settings)
+        except Exception as exc:
+            logger.error("Error in scheduled automation loop: %s", exc)
+
+
 def run_server(port: int | None = None) -> None:
     settings = load_settings()
     server_port = port or settings.port
@@ -245,6 +269,16 @@ def run_server(port: int | None = None) -> None:
         webhook_url = f"{settings.render_external_url.rstrip('/')}/webhook"
         logger.info("Registering Telegram Webhook at: %s", webhook_url)
         setup_telegram_webhook(settings, webhook_url)
+
+    # Start autonomous background scheduler daemon
+    scheduler_thread = threading.Thread(
+        target=_background_scheduler,
+        args=(settings,),
+        name="HN-Autonomous-Scheduler",
+        daemon=True,
+    )
+    scheduler_thread.start()
+    logger.info("⏰ Autonomous background scheduler started (warmup 15s, cycle every 3h).")
 
     server_address = ("0.0.0.0", server_port)
     httpd = ThreadingHTTPServer(server_address, AutomationHandler)

@@ -1,0 +1,23 @@
+name: ⏰ 24/7 Autonomous Hacker News Scheduler
+
+on:
+  schedule:
+    # Runs automatically every 3 hours (UTC) 24/7 without requiring any manual clicks
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger-render-auto-pilot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🚀 Ping Render Autonomous Auto-Pilot
+        run: |
+          echo "Pinging Render service at https://free-automations.onrender.com/trigger?type=all"
+          STATUS=$(curl -s -o response.json -w "%{http_code}" -X POST "https://free-automations.onrender.com/trigger?type=all")
+          echo "HTTP Status Code: $STATUS"
+          cat response.json || true
+          if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 300 ]; then
+            echo "✅ Successfully triggered Render autonomous engine!"
+          else
+            echo "⚠️ Server returned $STATUS (Server may be cold booting; request queued)."
+          fi

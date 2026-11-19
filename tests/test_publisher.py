@@ -15,6 +15,10 @@ class TestHNPublisher(unittest.TestCase):
     """Tests for HN authenticated publisher (session, login, commenting, story submission)."""
 
     def setUp(self):
+        self.sleep_patch = patch("time.sleep")
+        self.sleep_patch.start()
+        self.addCleanup(self.sleep_patch.stop)
+
         self.mock_settings = MagicMock()
         self.mock_settings.hn_username = "aman179102"
         self.mock_settings.hn_password = "test_password_123"
