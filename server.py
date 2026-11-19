@@ -21,6 +21,32 @@ logger = logging.getLogger("free-automations-server")
 
 def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None = None) -> bool:
     """Dispatches requested automation runner in a worker thread."""
+    # Handle Tumblr Actions
+    if action in ("tumblr", "tumblr_all", "tumblr_run"):
+        try:
+            from automations.tumblr import runner as tumblr_runner
+            tumblr_runner.run_all(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing tumblr_all: %s", exc)
+            return False
+    elif action in ("tumblr_post", "tumblr_publish"):
+        try:
+            from automations.tumblr import runner as tumblr_runner
+            tumblr_runner.run_post(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing tumblr_post: %s", exc)
+            return False
+    elif action in ("tumblr_reblog", "tumblr_curate"):
+        try:
+            from automations.tumblr import runner as tumblr_runner
+            tumblr_runner.run_reblog(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing tumblr_reblog: %s", exc)
+            return False
+
     try:
         from automations.hn import runner
     except ImportError:
@@ -43,7 +69,13 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
         elif action in ("all", "hn_all", "run"):
             if hasattr(runner, "run_all"):
                 runner.run_all(settings)
-                return True
+            if getattr(settings, "has_tumblr", False):
+                try:
+                    from automations.tumblr import runner as tumblr_runner
+                    tumblr_runner.run_all(settings)
+                except Exception as t_exc:
+                    logger.warning("Tumblr cycle error during 'all' run: %s", t_exc)
+            return True
         elif hasattr(runner, "dispatch_action"):
             return runner.dispatch_action(action, settings, extra or {})
     except Exception as exc:
@@ -73,6 +105,15 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
     elif text.startswith("/all") or text.startswith("/run"):
         send_telegram_message(settings, "⚡ <b>[Full Auto-Pilot Triggered]</b> Running complete Hacker News automation suite...")
         _dispatch_automation_job("all", settings)
+    elif text.startswith("/tumblr_post"):
+        send_telegram_message(settings, "🎨 <b>[Tumblr Post Triggered]</b> Generating aesthetic systems architecture card...")
+        _dispatch_automation_job("tumblr_post", settings)
+    elif text.startswith("/tumblr_reblog"):
+        send_telegram_message(settings, "🔄 <b>[Tumblr Reblog Triggered]</b> Scanning tech tags for community curation...")
+        _dispatch_automation_job("tumblr_reblog", settings)
+    elif text.startswith("/tumblr"):
+        send_telegram_message(settings, "🚀 <b>[Tumblr Auto-Pilot Triggered]</b> Running full Tumblr cycle...")
+        _dispatch_automation_job("tumblr", settings)
     elif text.startswith("/status"):
         user_str = settings.hn_username or "Unconfigured"
         auto_str = "Active (Auto-Pilot)" if settings.hn_auto_publish else "Dry-Run"
@@ -96,16 +137,32 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
         except Exception:
             pass
 
+        t_blog = getattr(settings, "tumblr_blog_name", "") or "Unconfigured"
+        t_auth = "❌ Unconfigured"
+        if getattr(settings, "has_tumblr", False):
+            try:
+                from automations.tumblr.api import TumblrAPIClient
+                t_client = TumblrAPIClient(settings)
+                t_auth = "✅ Active & Verified" if t_client.verify_credentials() else "⚠️ Auth Error"
+            except Exception:
+                t_auth = "⚠️ Check Keys"
+
         status_msg = (
-            f"📊 <b>[HACKER NEWS SERVER STATUS]</b>\n\n"
-            f"👤 <b>HN Account:</b> <code>{user_str}</code>\n"
-            f"⭐ <b>Account Karma:</b> <code>{karma_str}</code>\n"
-            f"🔐 <b>Login Status:</b> {login_str}\n"
-            f"🚀 <b>Auto-Publish Mode:</b> <code>{auto_str}</code>\n\n"
+            f"📊 <b>[FREE-AUTOMATIONS SERVER STATUS]</b>\n\n"
+            f"🧡 <b>Hacker News Engine:</b>\n"
+            f"• 👤 <b>Account:</b> <code>{user_str}</code>\n"
+            f"• ⭐ <b>Karma:</b> <code>{karma_str}</code>\n"
+            f"• 🔐 <b>Login:</b> {login_str}\n"
+            f"• 🚀 <b>Mode:</b> <code>{auto_str}</code>\n\n"
+            f"🎨 <b>Tumblr Engine:</b>\n"
+            f"• 🏢 <b>Blog:</b> <code>{t_blog}</code>\n"
+            f"• 🔐 <b>OAuth:</b> {t_auth}\n\n"
             f"⚙️ <b>Available Commands:</b>\n"
             f"• /run - Trigger full autonomous cycle\n"
-            f"• /comment - Comment on popular & rising posts\n"
+            f"• /comment - Comment on popular & rising HN posts\n"
             f"• /showcase - Submit next Show HN post\n"
+            f"• /tumblr_post - Publish educational tech card\n"
+            f"• /tumblr_reblog - Reblog curated community post\n"
             f"• /hiring - Scan monthly Who is Hiring radar\n"
             f"• /status - View this live status report"
         )
@@ -153,6 +210,9 @@ class AutomationHandler(BaseHTTPRequestHandler):
                     "POST /trigger/hn/discussion",
                     "POST /trigger/hn/showcase",
                     "POST /trigger/hn/all",
+                    "POST /trigger/tumblr/post",
+                    "POST /trigger/tumblr/reblog",
+                    "POST /trigger/tumblr/all",
                     "POST /webhook",
                 ],
                 "time_utc": datetime.now(timezone.utc).isoformat(),
@@ -191,6 +251,12 @@ class AutomationHandler(BaseHTTPRequestHandler):
             action = "showcase"
         elif path in ("/trigger/hn/all", "/trigger/all", "/trigger_all"):
             action = "all"
+        elif path in ("/trigger/tumblr/post", "/trigger_tumblr_post", "/tumblr_post"):
+            action = "tumblr_post"
+        elif path in ("/trigger/tumblr/reblog", "/trigger_tumblr_reblog", "/tumblr_reblog"):
+            action = "tumblr_reblog"
+        elif path in ("/trigger/tumblr/all", "/trigger/tumblr", "/trigger_tumblr", "/tumblr"):
+            action = "tumblr"
         elif path in ("/webhook", "/telegram_webhook"):
             # Telegram Webhook endpoint - respond immediately with 200 OK
             self.send_response(200)

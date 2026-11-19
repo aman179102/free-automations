@@ -68,6 +68,14 @@ class Settings:
     hn_cookie: str = ""
     hn_auto_publish: bool = False
 
+    # Tumblr Official API v2 Authentication
+    tumblr_consumer_key: str = ""
+    tumblr_consumer_secret: str = ""
+    tumblr_oauth_token: str = ""
+    tumblr_oauth_token_secret: str = ""
+    tumblr_blog_name: str = ""
+    tumblr_auto_publish: bool = False
+
     # Runtime & Paths
     timezone: str = "Asia/Kolkata"
     port: int = 10000
@@ -84,6 +92,17 @@ class Settings:
     def has_telegram(self) -> bool:
         """Returns True if Telegram credentials are fully set."""
         return bool(self.telegram_bot_token and self.telegram_chat_id)
+
+    @property
+    def has_tumblr(self) -> bool:
+        """Returns True if all Tumblr OAuth credentials and blog name are present."""
+        return bool(
+            self.tumblr_consumer_key
+            and self.tumblr_consumer_secret
+            and self.tumblr_oauth_token
+            and self.tumblr_oauth_token_secret
+            and self.tumblr_blog_name
+        )
 
 
 def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
@@ -118,6 +137,16 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         raw_auto = os.getenv("HN_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
     hn_auto_publish = bool(raw_auto)
 
+    tumblr_consumer_key = str(overrides.get("tumblr_consumer_key") or get_str("TUMBLR_CONSUMER_KEY"))
+    tumblr_consumer_secret = str(overrides.get("tumblr_consumer_secret") or get_str("TUMBLR_CONSUMER_SECRET"))
+    tumblr_oauth_token = str(overrides.get("tumblr_oauth_token") or get_str("TUMBLR_OAUTH_TOKEN"))
+    tumblr_oauth_token_secret = str(overrides.get("tumblr_oauth_token_secret") or get_str("TUMBLR_OAUTH_TOKEN_SECRET"))
+    tumblr_blog_name = str(overrides.get("tumblr_blog_name") or get_str("TUMBLR_BLOG_NAME"))
+    raw_tumblr_auto = overrides.get("tumblr_auto_publish")
+    if raw_tumblr_auto is None:
+        raw_tumblr_auto = os.getenv("TUMBLR_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
+    tumblr_auto_publish = bool(raw_tumblr_auto)
+
     tz_str = str(overrides.get("timezone") or get_str("TIMEZONE", default="Asia/Kolkata"))
     port = int(overrides.get("port") or int(os.getenv("PORT", "10000")))
     render_external_url = str(overrides.get("render_external_url") or get_str("RENDER_EXTERNAL_URL", default=""))
@@ -146,6 +175,12 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         hn_password=hn_password,
         hn_cookie=hn_cookie,
         hn_auto_publish=hn_auto_publish,
+        tumblr_consumer_key=tumblr_consumer_key,
+        tumblr_consumer_secret=tumblr_consumer_secret,
+        tumblr_oauth_token=tumblr_oauth_token,
+        tumblr_oauth_token_secret=tumblr_oauth_token_secret,
+        tumblr_blog_name=tumblr_blog_name,
+        tumblr_auto_publish=tumblr_auto_publish,
         timezone=tz_str,
         port=port,
         render_external_url=render_external_url,
