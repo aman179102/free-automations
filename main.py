@@ -33,12 +33,20 @@ def _cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--daemon", action="store_true", help="Run in continuous background loop")
     parser.add_argument("--interval", type=int, default=60, help="Daemon cycle interval in minutes (default: 60)")
     parser.add_argument("--dry-run", action="store_true", help="Run automation without sending messages to Telegram")
+    parser.add_argument("--live", "--auto-publish", action="store_true", dest="live", help="Autonomously publish comments and Show HN posts live to Hacker News")
+    parser.add_argument("--discussion-mode", choices=["all", "popular", "rising", "ask_hn"], default="all", help="Target discussion type (popular top stories vs fresh rising threads)")
     parser.add_argument("--port", type=int, default=None, help="Custom server port (overrides PORT env)")
 
     return parser
 
 
-def run_hn_action(action: str, settings, dry_run: bool = False) -> bool:
+def run_hn_action(
+    action: str,
+    settings,
+    dry_run: bool = False,
+    auto_publish: bool = False,
+    discussion_mode: str = "all",
+) -> bool:
     """Invokes the HN automation runner if installed."""
     try:
         from automations.hn import runner
@@ -60,14 +68,22 @@ def run_hn_action(action: str, settings, dry_run: bool = False) -> bool:
 
     func = getattr(runner, func_name)
     try:
-        logger.info("Executing HN action '%s' (dry_run=%s)...", action, dry_run)
-        # Check if dry_run parameter is supported by runner
+        logger.info(
+            "Executing HN action '%s' (dry_run=%s, auto_publish=%s, discussion_mode=%s)...",
+            action,
+            dry_run,
+            auto_publish,
+            discussion_mode,
+        )
+        kwargs: dict[str, Any] = {"dry_run": dry_run}
         import inspect
         sig = inspect.signature(func)
-        if "dry_run" in sig.parameters:
-            func(settings, dry_run=dry_run)
-        else:
-            func(settings)
+        if "auto_publish" in sig.parameters:
+            kwargs["auto_publish"] = auto_publish
+        if "mode" in sig.parameters and action == "discussion":
+            kwargs["mode"] = discussion_mode
+
+        func(settings, **kwargs)
         return True
     except Exception as exc:
         logger.error("Failed to execute HN %s: %s", action, exc)
@@ -78,6 +94,9 @@ def main() -> int:
     parser = _cli_parser()
     args = parser.parse_args()
     settings = load_settings()
+    if args.live:
+        # Override settings with live publishing active
+        object.__setattr__(settings, "hn_auto_publish", True) if hasattr(settings, "__dataclass_fields__") else None
 
     # 1. Test Telegram Ping
     if args.test_telegram:
@@ -105,11 +124,12 @@ def main() -> int:
     # 4. Daemon loop
     if args.daemon:
         interval_secs = max(args.interval * 60, 60)
-        logger.info("Starting daemon mode. Interval: %d minutes", args.interval)
+        mode_label = "AUTONOMOUS LIVE AUTO-PILOT (NO BUTTONS)" if args.live else "DRY-RUN SIMULATION"
+        logger.info("Starting background daemon. Mode: %s. Interval: %d minutes", mode_label, args.interval)
         try:
             while True:
                 logger.info("--- Starting scheduled automation cycle ---")
-                run_hn_action("all", settings, dry_run=args.dry_run)
+                run_hn_action("all", settings, dry_run=args.dry_run, auto_publish=args.live, discussion_mode=args.discussion_mode)
                 logger.info("Cycle complete. Sleeping for %d minutes...", args.interval)
                 time.sleep(interval_secs)
         except KeyboardInterrupt:
@@ -118,19 +138,19 @@ def main() -> int:
 
     # 5. Individual or All HN commands
     if args.hn_hiring:
-        ok = run_hn_action("hiring", settings, dry_run=args.dry_run)
+        ok = run_hn_action("hiring", settings, dry_run=args.dry_run, auto_publish=args.live)
         return 0 if ok else 1
 
     if args.hn_discussion:
-        ok = run_hn_action("discussion", settings, dry_run=args.dry_run)
+        ok = run_hn_action("discussion", settings, dry_run=args.dry_run, auto_publish=args.live, discussion_mode=args.discussion_mode)
         return 0 if ok else 1
 
     if args.hn_showcase:
-        ok = run_hn_action("showcase", settings, dry_run=args.dry_run)
+        ok = run_hn_action("showcase", settings, dry_run=args.dry_run, auto_publish=args.live)
         return 0 if ok else 1
 
     if args.hn_all:
-        ok = run_hn_action("all", settings, dry_run=args.dry_run)
+        ok = run_hn_action("all", settings, dry_run=args.dry_run, auto_publish=args.live, discussion_mode=args.discussion_mode)
         return 0 if ok else 1
 
     # Default if no arguments provided: print help

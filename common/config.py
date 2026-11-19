@@ -17,9 +17,8 @@ class ConfigError(RuntimeError):
 
 
 DEFAULT_GEMINI_MODELS = (
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-1.5-flash",
+    "gemini-flash-latest",
+    "gemini-pro-latest",
 )
 
 DEFAULT_GROQ_MODELS = (
@@ -63,6 +62,12 @@ class Settings:
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # Hacker News Autonomous Authentication
+    hn_username: str = ""
+    hn_password: str = ""
+    hn_cookie: str = ""
+    hn_auto_publish: bool = False
+
     # Runtime & Paths
     timezone: str = "Asia/Kolkata"
     port: int = 10000
@@ -105,6 +110,14 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
     telegram_bot_token = str(overrides.get("telegram_bot_token") or get_str("TELEGRAM_BOT_TOKEN"))
     telegram_chat_id = str(overrides.get("telegram_chat_id") or get_str("TELEGRAM_CHAT_ID"))
 
+    hn_username = str(overrides.get("hn_username") or get_str("HN_USERNAME"))
+    hn_password = str(overrides.get("hn_password") or get_str("HN_PASSWORD"))
+    hn_cookie = str(overrides.get("hn_cookie") or get_str("HN_COOKIE"))
+    raw_auto = overrides.get("hn_auto_publish")
+    if raw_auto is None:
+        raw_auto = os.getenv("HN_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
+    hn_auto_publish = bool(raw_auto)
+
     tz_str = str(overrides.get("timezone") or get_str("TIMEZONE", default="Asia/Kolkata"))
     port = int(overrides.get("port") or int(os.getenv("PORT", "10000")))
     render_external_url = str(overrides.get("render_external_url") or get_str("RENDER_EXTERNAL_URL", default=""))
@@ -129,6 +142,10 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         openrouter_models=_model_list("OPENROUTER_MODELS", "OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODELS),
         telegram_bot_token=telegram_bot_token,
         telegram_chat_id=telegram_chat_id,
+        hn_username=hn_username,
+        hn_password=hn_password,
+        hn_cookie=hn_cookie,
+        hn_auto_publish=hn_auto_publish,
         timezone=tz_str,
         port=port,
         render_external_url=render_external_url,

@@ -129,6 +129,12 @@ class HNAPIClient:
             return [int(x) for x in data[:limit] if isinstance(x, (int, str)) and str(x).isdigit()]
         return []
 
+    def get_user(self, username: str) -> Optional[dict[str, Any]]:
+        """Fetch user profile JSON from Firebase (karma, about, created, submitted)."""
+        url = f"{self.firebase_base}/user/{username}.json"
+        data = self._get_json(url)
+        return data if isinstance(data, dict) else None
+
     # =========================================================================
     # Algolia Search API Endpoints
     # =========================================================================

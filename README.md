@@ -56,9 +56,13 @@ free-automations/
 - Powered 100% by official free APIs:
   - **Firebase REST API**: `https://hacker-news.firebaseio.com/v0/`
   - **Algolia HN Search API**: `https://hn.algolia.com/api/v1/`
+- **100% Autonomous Auto-Pilot Mode**: Zero manual buttons or clicks needed. Posts comments and submits Show HN posts automatically when `--live` is enabled or `HN_AUTO_PUBLISH=true`.
+- **Popular & Rising Thread Targeting**:
+  - Comments on top popular stories (`fetch_topstories`) for broad visibility and karma.
+  - Comments on fresh, rising, less popular threads (`fetch_newstories`) early to lead technical discussions.
+- **Show HN Showcase Auto-Publisher**: Submits Show HN posts rotating across Aman's open-source projects (Distributed Storage, Real-Time Analytics Pipeline, PodVoice).
+- **Stealth & Anti-Ban Cooldown Gate**: Enforces a 30-minute minimum delay between comments and 3 days between story submissions to prevent shadowbans or rate-limiting.
 - **Hiring Radar**: Filters "Who is Hiring?" threads for strictly 100% remote Golang, Python, FastAPI, and MVP developer roles; extracts founder contacts and drafts personalized pitches citing Aman's GitHub.
-- **Ask HN Discussions**: Scans rising technical architecture discussions and drafts senior systems engineering answers.
-- **Show HN Showcase**: Drafts high-engagement launch posts for Aman's open-source projects (Distributed Storage, Real-Time Analytics Pipeline, PodVoice).
 
 ---
 
@@ -106,35 +110,66 @@ Test AI providers (Gemini, Groq, OpenRouter):
 python main.py --test-ai
 ```
 
-Run Hacker News Who is Hiring Radar:
+### 100% Autonomous Auto-Pilot Mode (No Buttons Needed)
+
+Run full cycle in live autonomous mode (publishes comments & Show HN posts):
 ```bash
-python main.py --hn-hiring
+python main.py --hn-all --live
 ```
 
-Find Ask HN technical questions and draft answers:
+Target popular top stories for commenting:
 ```bash
-python main.py --hn-discussion
+python main.py --hn-discussion --discussion-mode popular --live
 ```
 
-Draft Show HN open-source project showcases:
+Target rising / less popular fresh threads:
 ```bash
-python main.py --hn-showcase
+python main.py --hn-discussion --discussion-mode rising --live
 ```
 
-Run full automation cycle:
+Submit next project in Show HN rotation:
 ```bash
-python main.py --hn-all
+python main.py --hn-showcase --live
 ```
 
-Run in dry-run mode (print to stdout without dispatching to Telegram):
+Run 24/7 background autopilot daemon (every 30 mins):
 ```bash
-python main.py --hn-all --dry-run
+python main.py --daemon --live --interval 30
 ```
 
-Run continuous daemon (every 60 minutes):
-```bash
-python main.py --daemon --interval 60
-```
+---
+
+## ☁️ Oracle VPS 24/7 Deployment
+
+Deploying on your Oracle Cloud Always Free VPS takes 2 minutes:
+
+1. **Clone repo on VPS:**
+   ```bash
+   git clone https://github.com/aman179102/free-automations.git
+   cd free-automations
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+2. **Configure `.env`:**
+   ```bash
+   cp .env.example .env
+   # Add your HN_USERNAME, HN_PASSWORD, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+   ```
+
+3. **Install systemd daemon service:**
+   ```bash
+   sudo cp free-automations.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now free-automations
+   ```
+
+4. **Check status & logs:**
+   ```bash
+   sudo systemctl status free-automations
+   journalctl -u free-automations -f
+   ```
 
 ---
 

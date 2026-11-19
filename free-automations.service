@@ -1,0 +1,15 @@
+[Unit]
+Description=Free-Automations 24/7 Autonomous Auto-Pilot Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/free-automations
+ExecStart=/home/ubuntu/free-automations/.venv/bin/python main.py --daemon --live --interval 30
+Restart=always
+RestartSec=15
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

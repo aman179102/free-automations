@@ -8,6 +8,7 @@ import argparse
 import html
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -178,13 +179,30 @@ class HNRunner:
         return new_leads
 
     # =========================================================================
-    # 2. Ask HN Discussion Execution
+    # 2. Ask HN & Tech Discussion Execution (Popular + Rising Autopilot)
     # =========================================================================
 
-    def run_discussion(self, max_discussions: int = 3, send_telegram: bool = True) -> list[DiscussionTopic]:
-        """Finds rising Ask HN architecture threads and drafts senior engineering answers."""
+    def run_discussion(
+        self,
+        max_discussions: int = 3,
+        mode: str = "all",
+        send_telegram: bool = True,
+        auto_publish: Optional[bool] = None,
+    ) -> list[DiscussionTopic]:
+        """
+        Discovers popular top discussions or rising fresh threads on Hacker News,
+        drafts senior engineering answers, and autonomously publishes them if enabled.
+        """
         state = self._load_state()
-        all_topics = self.discussion_engine.find_architecture_discussions(limit=15)
+
+        if mode == "popular":
+            all_topics = self.discussion_engine.find_popular_discussions(limit=max_discussions * 3)
+        elif mode == "rising":
+            all_topics = self.discussion_engine.find_rising_and_new_discussions(limit=max_discussions * 3)
+        elif mode == "targets" and hasattr(self.discussion_engine, "find_all_discussion_targets"):
+            all_topics = self.discussion_engine.find_all_discussion_targets(limit=max_discussions * 3)
+        else:
+            all_topics = self.discussion_engine.find_architecture_discussions(limit=max_discussions * 3)
 
         new_topics: list[DiscussionTopic] = []
         for topic in all_topics:
@@ -194,94 +212,175 @@ class HNRunner:
             if len(new_topics) >= max_discussions:
                 break
 
-        logger.info("Found %d rising Ask HN architecture discussions", len(new_topics))
+        logger.info("Found %d targeted discussions in mode '%s'", len(new_topics), mode)
+
+        if auto_publish is None:
+            raw_setting = getattr(self.settings, "hn_auto_publish", False) if self.settings else False
+            is_auto = bool(raw_setting is True)
+        else:
+            is_auto = bool(auto_publish)
+
+        # Anti-spam cooldown gate: minimum 30 minutes between automated comments
+        min_comment_interval = 1800  # 30 minutes
+        last_comment_ts = float(state.get("hn_last_comment_at", 0) or 0)
+        now = time.time()
 
         for topic in new_topics:
             self._mark_seen(state, topic.story.id, key="seen_discussion_ids")
+
+            posted_live = False
+            if is_auto:
+                time_since_last = now - last_comment_ts
+                if last_comment_ts > 0 and time_since_last < min_comment_interval:
+                    wait_mins = int((min_comment_interval - time_since_last) / 60)
+                    logger.info(
+                        "Comment cooldown active (last comment %ds ago). Skipping auto-comment on #%d to avoid rate-limits (ready in ~%dm).",
+                        int(time_since_last),
+                        topic.story.id,
+                        wait_mins,
+                    )
+                else:
+                    try:
+                        from automations.hn.publisher import HNPublisher
+                        pub = HNPublisher(self.settings)
+                        posted_live = pub.post_comment(topic.story.id, topic.draft_response)
+                        if posted_live:
+                            last_comment_ts = now
+                            state["hn_last_comment_at"] = now
+                            state["hn_comments_posted_count"] = int(state.get("hn_comments_posted_count", 0)) + 1
+                    except Exception as exc:
+                        logger.warning("Auto-publish comment error on #%d: %s", topic.story.id, exc)
 
             if send_telegram and self.settings and getattr(self.settings, "has_telegram", False):
                 title_escaped = html.escape(topic.story.title)
                 cat_escaped = html.escape(topic.category)
                 reply_escaped = html.escape(topic.draft_response)
 
+                status_badge = "🚀 <b>[AUTONOMOUSLY POSTED TO HN]</b>" if posted_live else "🧠 <b>HN DISCUSSION MATCH (DRY RUN)</b>"
                 msg_parts = [
-                    f"🧠 <b>ASK HN ARCHITECTURE DISCUSSION</b>",
+                    status_badge,
                     f"📌 <b>Title:</b> {title_escaped}",
-                    f"🏷️ <b>Domain:</b> <code>{cat_escaped}</code>",
+                    f"🏷️ <b>Category:</b> <code>{cat_escaped}</code>",
                     f"⭐ <b>Score:</b> {topic.story.score} pts | 💬 {topic.story.descendants} comments",
+                    f"🔗 <b>HN Story:</b> https://news.ycombinator.com/item?id={topic.story.id}",
                     f"\n💡 <b>Senior Systems Architecture Response:</b>\n\n{reply_escaped}",
                 ]
                 message_text = "\n".join(msg_parts)
-
-                keyboard_rows = []
-                first_row = []
-                if build_hn_button:
-                    first_row.append(build_hn_button(topic.story.id, "🧡 Reply on HN"))
-                if build_github_button:
-                    first_row.append(build_github_button(text="🐙 Aman's GitHub"))
-                if first_row:
-                    keyboard_rows.append(first_row)
-
-                reply_markup = build_inline_keyboard(keyboard_rows) if build_inline_keyboard else None
-                self._dispatch_telegram(message_text, reply_markup=reply_markup)
+                self._dispatch_telegram(message_text)
 
         if record_action:
             record_action(
                 state,
                 "hn_discussion",
-                {"dispatched_count": len(new_topics), "story_ids": [t.story.id for t in new_topics]},
+                {
+                    "mode": mode,
+                    "dispatched_count": len(new_topics),
+                    "story_ids": [t.story.id for t in new_topics],
+                    "auto_published": is_auto,
+                },
             )
         self._save_state(state)
         return new_topics
 
     # =========================================================================
-    # 3. Show HN Showcase Execution
+    # 3. Show HN Showcase Execution (Autonomous Project Publishing)
     # =========================================================================
 
     def run_showcase(
         self,
         project_slug: Optional[str] = None,
         send_telegram: bool = True,
+        auto_publish: Optional[bool] = None,
+        force: bool = False,
     ) -> list[ShowcaseProject]:
-        """Drafts Show HN post for a specified project or all projects and previews in Telegram."""
+        """
+        Drafts and autonomously submits 'Show HN' posts for Aman's open-source projects.
+        Rotates projects systematically and adheres to safety cooldowns.
+        """
         state = self._load_state()
 
+        if auto_publish is None:
+            raw_setting = getattr(self.settings, "hn_auto_publish", False) if self.settings else False
+            is_auto = bool(raw_setting is True)
+        else:
+            is_auto = bool(auto_publish)
+
+        # 1. Project selection: specific slug or round-robin rotation
+        posted_history: dict[str, float] = state.get("posted_showcases", {})
         if project_slug:
             project = self.showcase_manager.get_project(project_slug)
             projects = [project] if project else []
         else:
-            projects = self.showcase_manager.list_projects()
+            all_projs = self.showcase_manager.list_projects()
+            # Sort projects so the least recently posted (or never posted) comes first
+            all_projs.sort(key=lambda p: posted_history.get(p.slug, 0.0))
+            projects = [all_projs[0]] if all_projs else []
+
+        # Anti-spam cooldown gate for story submissions: at least 3 days between Show HN submissions
+        min_story_interval = 3 * 86400  # 3 days
+        last_story_ts = float(state.get("hn_last_story_at", 0) or 0)
+        now = time.time()
 
         for proj in projects:
+            submitted_url: Optional[str] = None
+            if is_auto:
+                time_since_last_story = now - last_story_ts
+                if not force and last_story_ts > 0 and time_since_last_story < min_story_interval:
+                    days_left = round((min_story_interval - time_since_last_story) / 86400, 1)
+                    logger.info(
+                        "Story submission cooldown active (last story %ds ago). Skipping Show HN '%s' (ready in ~%.1f days).",
+                        int(time_since_last_story),
+                        proj.title,
+                        days_left,
+                    )
+                else:
+                    try:
+                        from automations.hn.publisher import HNPublisher
+                        pub = HNPublisher(self.settings)
+                        submitted_url = pub.submit_story(
+                            title=proj.suggested_title,
+                            text=proj.body_markdown,
+                            url="",
+                        )
+                        if submitted_url:
+                            last_story_ts = now
+                            state["hn_last_story_at"] = now
+                            posted_history[proj.slug] = now
+                            state["posted_showcases"] = posted_history
+                    except Exception as exc:
+                        logger.warning("Auto-publish Show HN error: %s", exc)
+
             if send_telegram and self.settings and getattr(self.settings, "has_telegram", False):
                 title_escaped = html.escape(proj.suggested_title)
-                repo_url = proj.github_url
                 body_escaped = html.escape(proj.body_markdown)
 
-                # Telegram message
+                if submitted_url:
+                    header = "🚀 <b>[AUTONOMOUSLY SUBMITTED SHOW HN]</b>"
+                    link_info = f"🔗 <b>HN Post Link:</b> {submitted_url}"
+                else:
+                    header = "🚀 <b>SHOW HN LAUNCH DRAFT (DRY RUN)</b>"
+                    link_info = f"🔗 <b>Submit Link:</b> https://news.ycombinator.com/submit"
+
                 msg_parts = [
-                    f"🚀 <b>SHOW HN LAUNCH DRAFT</b>",
+                    header,
                     f"📦 <b>Project:</b> {html.escape(proj.title)}",
-                    f"🔗 <b>Suggested Title:</b>\n<code>{title_escaped}</code>",
+                    f"📌 <b>Title:</b>\n<code>{title_escaped}</code>",
+                    link_info,
+                    f"🐙 <b>GitHub:</b> {proj.github_url}",
                     f"🛠️ <b>Tech:</b> <code>{', '.join(proj.tech_stack)}</code>",
-                    f"\n📄 <b>Post Submission Draft:</b>\n\n{body_escaped}",
+                    f"\n📄 <b>Post Submission Text:</b>\n\n{body_escaped}",
                 ]
                 message_text = "\n".join(msg_parts)
-
-                keyboard_rows = [
-                    [
-                        {"text": "🧡 Submit to HN", "url": "https://news.ycombinator.com/submit"},
-                        {"text": "🐙 GitHub Repo", "url": repo_url},
-                    ]
-                ]
-                reply_markup = build_inline_keyboard(keyboard_rows) if build_inline_keyboard else None
-                self._dispatch_telegram(message_text, reply_markup=reply_markup)
+                self._dispatch_telegram(message_text)
 
         if record_action:
             record_action(
                 state,
                 "hn_showcase",
-                {"projects": [p.slug for p in projects]},
+                {
+                    "projects": [p.slug for p in projects],
+                    "auto_published": is_auto,
+                },
             )
         self._save_state(state)
         return projects
@@ -290,17 +389,27 @@ class HNRunner:
     # 4. Master Orchestrator
     # =========================================================================
 
-    def run_all(self, send_telegram: bool = True) -> dict[str, Any]:
-        """Runs hiring radar, discussion engine, and showcase sequentially."""
+    def run_all(self, send_telegram: bool = True, auto_publish: Optional[bool] = None) -> dict[str, Any]:
+        """Runs hiring radar, popular & rising discussion engine, showcase, and profile tracker."""
         logger.info("Starting complete HN automation pipeline...")
         leads = self.run_hiring_radar(max_leads=5, send_telegram=send_telegram)
-        discussions = self.run_discussion(max_discussions=3, send_telegram=send_telegram)
-        showcases = self.run_showcase(project_slug="distributed-file-storage", send_telegram=send_telegram)
+        discussions = self.run_discussion(max_discussions=3, mode="all", send_telegram=send_telegram, auto_publish=auto_publish)
+        showcases = self.run_showcase(send_telegram=send_telegram, auto_publish=auto_publish)
+
+        # Profile & karma status check
+        karma_val = None
+        hn_user = getattr(self.settings, "hn_username", "") if self.settings else ""
+        if isinstance(hn_user, str) and hn_user:
+            user_data = self.api_client.get_user(hn_user)
+            if user_data:
+                karma_val = user_data.get("karma", 0)
+                logger.info("Hacker News user '%s' current karma: %d", hn_user, karma_val)
 
         return {
             "hiring_leads_count": len(leads),
             "discussions_count": len(discussions),
             "showcases_count": len(showcases),
+            "karma": karma_val,
             "leads": [l.company for l in leads],
             "discussions": [d.story.title for d in discussions],
             "showcase": [s.title for s in showcases],
@@ -317,22 +426,52 @@ def run_hiring_radar(settings: Optional[Any] = None, dry_run: bool = False, max_
     return runner.run_hiring_radar(max_leads=max_leads, send_telegram=not dry_run)
 
 
-def run_discussion(settings: Optional[Any] = None, dry_run: bool = False, max_discussions: int = 3) -> list[DiscussionTopic]:
-    """Module-level entry point to find rising Ask HN architecture threads."""
+def run_discussion(
+    settings: Optional[Any] = None,
+    dry_run: bool = False,
+    max_discussions: int = 3,
+    mode: Optional[str] = None,
+    auto_publish: Optional[bool] = None,
+) -> list[DiscussionTopic]:
+    """Module-level entry point to find popular & rising threads and comment autonomously."""
     runner = HNRunner(settings=settings)
-    return runner.run_discussion(max_discussions=max_discussions, send_telegram=not dry_run)
+    kwargs: dict[str, Any] = {
+        "max_discussions": max_discussions,
+        "send_telegram": not dry_run,
+    }
+    if mode is not None:
+        kwargs["mode"] = mode
+    if auto_publish is not None:
+        kwargs["auto_publish"] = auto_publish
+    return runner.run_discussion(**kwargs)
 
 
-def run_showcase(settings: Optional[Any] = None, dry_run: bool = False, project_slug: Optional[str] = None) -> list[ShowcaseProject]:
-    """Module-level entry point to draft Show HN posts."""
+def run_showcase(
+    settings: Optional[Any] = None,
+    dry_run: bool = False,
+    project_slug: Optional[str] = None,
+    auto_publish: Optional[bool] = None,
+) -> list[ShowcaseProject]:
+    """Module-level entry point to draft and autonomously submit Show HN posts."""
     runner = HNRunner(settings=settings)
-    return runner.run_showcase(project_slug=project_slug, send_telegram=not dry_run)
+    kwargs: dict[str, Any] = {
+        "project_slug": project_slug,
+        "send_telegram": not dry_run,
+    }
+    if auto_publish is not None:
+        kwargs["auto_publish"] = auto_publish
+    return runner.run_showcase(**kwargs)
 
 
-def run_all(settings: Optional[Any] = None, dry_run: bool = False) -> dict[str, Any]:
+def run_all(settings: Optional[Any] = None, dry_run: bool = False, auto_publish: Optional[bool] = None) -> dict[str, Any]:
     """Module-level entry point to run full Hacker News automation pipeline."""
     runner = HNRunner(settings=settings)
-    return runner.run_all(send_telegram=not dry_run)
+    kwargs: dict[str, Any] = {
+        "send_telegram": not dry_run,
+    }
+    if auto_publish is not None:
+        kwargs["auto_publish"] = auto_publish
+    return runner.run_all(**kwargs)
 
 
 def main() -> None:
@@ -346,15 +485,17 @@ def main() -> None:
         default="all",
         help="Automation mode to execute",
     )
+    parser.add_argument("--discussion-mode", choices=["all", "popular", "rising", "ask_hn"], default="all", help="Discussion target category")
     parser.add_argument("--limit", type=int, default=5, help="Maximum items to process")
     parser.add_argument("--project", type=str, default="", help="Specific project slug for showcase")
     parser.add_argument("--dry-run", action="store_true", help="Print outputs without dispatching to Telegram")
+    parser.add_argument("--live", "--auto-publish", action="store_true", dest="live", help="Autonomously publish comments and Show HN posts to Hacker News")
     args = parser.parse_args()
 
     runner = HNRunner()
     send_telegram = not args.dry_run
 
-    print(f"\n🚀 Running Hacker News automation in mode: '{args.mode}' (send_telegram={send_telegram})\n")
+    print(f"\n🚀 Running Hacker News automation in mode: '{args.mode}' (send_telegram={send_telegram}, live={args.live})\n")
 
     if args.mode == "hiring":
         leads = runner.run_hiring_radar(max_leads=args.limit, send_telegram=send_telegram)
@@ -363,24 +504,38 @@ def main() -> None:
             print(f"  • {l.company} - {l.role} (Contact: {l.founder_or_contact}, Email: {l.email})")
 
     elif args.mode == "discussion":
-        topics = runner.run_discussion(max_discussions=args.limit, send_telegram=send_telegram)
-        print(f"✅ Processed {len(topics)} architecture discussions:")
+        topics = runner.run_discussion(
+            max_discussions=args.limit,
+            mode=args.discussion_mode,
+            send_telegram=send_telegram,
+            auto_publish=args.live if args.live else None,
+        )
+        print(f"✅ Processed {len(topics)} discussions ({args.discussion_mode}):")
         for t in topics:
             print(f"  • [{t.category}] {t.story.title} ({t.story.score} pts)")
 
     elif args.mode == "showcase":
         project_slug = args.project or None
-        projects = runner.run_showcase(project_slug=project_slug, send_telegram=send_telegram)
-        print(f"✅ Generated {len(projects)} Show HN drafts:")
+        projects = runner.run_showcase(
+            project_slug=project_slug,
+            send_telegram=send_telegram,
+            auto_publish=args.live if args.live else None,
+        )
+        print(f"✅ Processed {len(projects)} Show HN posts:")
         for p in projects:
             print(f"  • {p.suggested_title}")
 
     elif args.mode == "all":
-        results = runner.run_all(send_telegram=send_telegram)
+        results = runner.run_all(
+            send_telegram=send_telegram,
+            auto_publish=args.live if args.live else None,
+        )
         print("✅ Pipeline execution completed successfully:")
         print(f"  • Hiring Leads: {results['hiring_leads_count']}")
         print(f"  • Discussions: {results['discussions_count']}")
         print(f"  • Showcases: {results['showcases_count']}")
+        if results.get("karma") is not None:
+            print(f"  • Account Karma: {results['karma']}")
 
 
 if __name__ == "__main__":

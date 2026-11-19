@@ -47,6 +47,16 @@ ARCHITECTURE_TOPICS = {
         "category": "System Design & Scaling Trade-offs",
         "key_tradeoffs": "Boundaries should follow data ownership and failure domains rather than arbitrary feature splits. Avoid distributed transactions; favor eventual consistency with idempotency keys.",
     },
+    "ai_ml_systems": {
+        "keywords": ["llm", "inference", "vllm", "ollama", "quantization", "gguf", "cuda", "gpu", "pytorch", "embeddings", "vector database", "fine-tuning", "lora"],
+        "category": "AI/ML Systems & Local Inference",
+        "key_tradeoffs": "VRAM memory bandwidth bounds autoregressive token generation. Quantization (4-bit/8-bit AWQ or GGUF) reduces memory bandwidth pressure and KV cache size with minimal perplexity degradation.",
+    },
+    "devops_cloud_infra": {
+        "keywords": ["kubernetes", "k8s", "docker", "ebpf", "linux", "networking", "wireguard", "nginx", "envoy", "observability", "prometheus", "opentelemetry", "bare metal"],
+        "category": "Linux Internals, Networking & Cloud Infrastructure",
+        "key_tradeoffs": "Kubernetes orchestration vs single-node compose/systemd simplicity. eBPF provides kernel-level observability and socket bypass without context-switch overhead.",
+    },
 }
 
 SYSTEMS_PROMPT = """You are a Principal Systems & Infrastructure Architect responding to an Ask HN question.
@@ -58,17 +68,18 @@ Your response must adhere to Hacker News engineering culture:
 """
 
 
-def score_discussion_candidate(story: HNStory) -> tuple[float, str, list[str]]:
+def score_discussion_candidate(story: HNStory, allow_general: bool = False) -> tuple[float, str, list[str]]:
     """
-    Evaluates whether an HN story is an Ask HN architecture question and calculates
-    a relevance score along with matched topic and tags.
+    Evaluates whether an HN story is an engineering/architecture question or discussion,
+    calculating a relevance score along with matched topic and tags.
     """
     title = story.title.lower()
     text = (story.clean_text or "").lower()
     full_text = f"{title} {text}"
 
-    # Must be Ask HN or discussion query
-    is_ask_hn = title.startswith("ask hn:") or title.startswith("ask hn") or story.type == "story"
+    # Must be Ask HN, Show HN, or general tech story
+    is_ask_hn = title.startswith("ask hn:") or title.startswith("ask hn")
+    is_show_hn = title.startswith("show hn:") or title.startswith("show hn")
 
     matched_tags: list[str] = []
     best_category = "General Architecture"
@@ -82,16 +93,20 @@ def score_discussion_candidate(story: HNStory) -> tuple[float, str, list[str]]:
             matched_tags = matches
 
     if max_matches == 0:
+        if allow_general and (is_ask_hn or story.score >= 50):
+            return 15.0, "General Software Engineering", []
         return 0.0, best_category, []
 
     # Score calculation based on matches, score, and discussion freshness
     score = float(max_matches * 15)
     if is_ask_hn:
         score += 25
+    if is_show_hn:
+        score += 15
     if story.score >= 5:
         score += min(story.score, 50)
-    if 2 <= story.descendants <= 50:
-        # Sweet spot: active discussion but not saturated with 500+ comments
+    if 2 <= story.descendants <= 60:
+        # Sweet spot: active discussion with room for senior comment visibility
         score += 20
 
     return score, best_category, matched_tags
@@ -171,6 +186,28 @@ def draft_architect_response(
             f"3. Backpressure: Ensure producers block or return HTTP 429 when processing queues fill up, rather than accumulating unbounded in-memory queues."
         )
 
+    if "AI/ML" in cat:
+        return (
+            f"When optimizing inference systems in production, memory bandwidth is typically the primary bottleneck rather than raw compute FLOPs:\n\n"
+            f"1. Memory Bandwidth & Quantization: Autoregressive token generation is heavily memory-bandwidth bound. Quantizing weights to 4-bit/8-bit (AWQ, GPTQ, or GGUF) "
+            f"cuts VRAM footprint and memory bus transfers proportionally, delivering near-linear inference speedups with negligible perplexity loss.\n\n"
+            f"2. KV Cache Management: Under concurrent load, the KV cache quickly consumes available VRAM. Using continuous batching with PagedAttention (vLLM) "
+            f"eliminates memory fragmentation and prevents out-of-memory crashes on long context windows.\n\n"
+            f"3. Local-First vs Cloud API: For latency-sensitive or proprietary workflows, self-hosting quantized models locally behind an internal API proxy "
+            f"ensures predictable latencies, data privacy, and zero API subscription costs."
+        )
+
+    if "Linux" in cat or "Networking" in cat or "Cloud" in cat:
+        return (
+            f"From an infrastructure perspective, keeping operational complexity proportional to actual system scale is critical:\n\n"
+            f"1. Keep the Abstraction Layer Lean: Before adopting heavy distributed orchestrators, evaluate whether containerized services under Docker Compose or "
+            f"systemd units with automated health checks satisfy your SLA with 90% less operational overhead.\n\n"
+            f"2. Socket & Kernel Tuning: Tuning basic Linux kernel parameters (e.g. net.ipv4.tcp_tw_reuse, somaxconn, and raising ulimit file descriptor boundaries) "
+            f"frequently triples connection capacity before application code even becomes a factor.\n\n"
+            f"3. Low-Overhead Observability: Establish OpenTelemetry tracing and Prometheus metrics early to isolate whether latency spikes stem from database locks, "
+            f"DNS resolution, or garbage collection pauses."
+        )
+
     # General Systems Scaling
     return (
         f"In system design at this stage, the rule of thumb is to design for operational simplicity until data boundaries dictate splitting:\n\n"
@@ -224,7 +261,7 @@ class DiscussionEngine:
                     topic.draft_response = draft_architect_response(
                         topic,
                         author_name=self.author_name,
-                        settings=None,
+                        settings=self.settings,
                     )
                     topics.append(topic)
 
@@ -249,10 +286,121 @@ class DiscussionEngine:
                 topic.draft_response = draft_architect_response(
                     topic,
                     author_name=self.author_name,
-                    settings=None,
+                    settings=self.settings,
                 )
                 topics.append(topic)
 
         # Sort topics by relevance score descending
         topics.sort(key=lambda t: t.relevance_score, reverse=True)
         return topics[:limit]
+
+    def find_popular_discussions(self, limit: int = 5) -> list[DiscussionTopic]:
+        """
+        Finds popular, highly upvoted technical stories on HN where adding an
+        architectural perspective brings high visibility.
+        """
+        topics: list[DiscussionTopic] = []
+        seen_ids = set()
+
+        # Fetch current top stories from Firebase
+        top_ids = self.api.fetch_topstories(limit=35)
+        for story_id in top_ids:
+            if story_id in seen_ids:
+                continue
+            seen_ids.add(story_id)
+            story = self.api.get_story(story_id)
+            if not story:
+                continue
+
+            score, category, tags = score_discussion_candidate(story, allow_general=True)
+            if score >= 15:
+                topic = DiscussionTopic(
+                    story=story,
+                    category=category,
+                    relevance_score=score,
+                    matched_tags=tags,
+                )
+                topic.draft_response = draft_architect_response(
+                    topic,
+                    author_name=self.author_name,
+                    settings=self.settings,
+                )
+                topics.append(topic)
+
+        topics.sort(key=lambda t: t.relevance_score, reverse=True)
+        return topics[:limit]
+
+    def find_rising_and_new_discussions(self, limit: int = 5) -> list[DiscussionTopic]:
+        """
+        Finds fresh, rising and less popular questions/posts where early thoughtful
+        responses have high impact and capture early discussion momentum.
+        """
+        topics: list[DiscussionTopic] = []
+        seen_ids = set()
+
+        # 1. Fetch newest stories
+        new_ids = self.api.fetch_newstories(limit=30)
+        # 2. Fetch fresh ask stories
+        ask_ids = self.api.fetch_askstories(limit=20)
+        candidate_ids = list(dict.fromkeys(new_ids + ask_ids))
+
+        for story_id in candidate_ids:
+            if story_id in seen_ids:
+                continue
+            seen_ids.add(story_id)
+            story = self.api.get_story(story_id)
+            if not story:
+                continue
+
+            # Target fresh threads with low comment saturation (<= 15 comments)
+            if story.descendants > 15:
+                continue
+
+            score, category, tags = score_discussion_candidate(story, allow_general=True)
+            if score >= 15:
+                topic = DiscussionTopic(
+                    story=story,
+                    category=category,
+                    relevance_score=score,
+                    matched_tags=tags,
+                )
+                topic.draft_response = draft_architect_response(
+                    topic,
+                    author_name=self.author_name,
+                    settings=self.settings,
+                )
+                topics.append(topic)
+
+        topics.sort(key=lambda t: t.relevance_score, reverse=True)
+        return topics[:limit]
+
+    def find_all_discussion_targets(
+        self,
+        limit: int = 5,
+        include_popular: bool = True,
+        include_rising: bool = True,
+    ) -> list[DiscussionTopic]:
+        """
+        Returns a balanced blend of popular tech stories and fresh rising threads.
+        """
+        combined: list[DiscussionTopic] = []
+        seen_ids = set()
+
+        if include_popular:
+            for top in self.find_popular_discussions(limit=limit):
+                if top.story.id not in seen_ids:
+                    seen_ids.add(top.story.id)
+                    combined.append(top)
+
+        if include_rising:
+            for ris in self.find_rising_and_new_discussions(limit=limit):
+                if ris.story.id not in seen_ids:
+                    seen_ids.add(ris.story.id)
+                    combined.append(ris)
+
+        # Fallback to architecture discussions if needed
+        if not combined:
+            return self.find_architecture_discussions(limit=limit)
+
+        combined.sort(key=lambda t: t.relevance_score, reverse=True)
+        return combined[:limit]
