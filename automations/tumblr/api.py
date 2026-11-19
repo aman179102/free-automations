@@ -42,11 +42,13 @@ class TumblrAPIClient:
                 token_secret=self.oauth_token_secret,
             )
 
+        transport = httpx.HTTPTransport(retries=3)
         self.client = httpx.Client(
             base_url=TUMBLR_API_BASE,
-            timeout=25.0,
+            timeout=30.0,
+            transport=transport,
             headers={
-                "User-Agent": "Free-Automations/1.0 (Tumblr Autonomous Tech Engine)",
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             },
         )
 

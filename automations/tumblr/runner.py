@@ -101,19 +101,22 @@ class TumblrRunner:
         post_url = None
 
         if is_auto and self.client.is_configured():
-            result = self.publisher.publish_post(candidate, use_queue=use_queue)
-            if result.get("status") == "success":
-                posted_live = True
-                res_resp = result.get("response", {})
-                post_id = res_resp.get("id")
-                blog_id = self.client._normalize_blog_id()
-                post_url = f"https://{blog_id}/post/{post_id}" if post_id else f"https://{blog_id}"
+            try:
+                result = self.publisher.publish_post(candidate, use_queue=use_queue)
+                if result.get("status") == "success":
+                    posted_live = True
+                    res_resp = result.get("response", {})
+                    post_id = res_resp.get("id")
+                    blog_id = self.client._normalize_blog_id()
+                    post_url = f"https://{blog_id}/post/{post_id}" if post_id else f"https://{blog_id}"
 
-                state["tumblr_last_post_at"] = now
-                daily_count += 1
-                daily_posts[today_str] = daily_count
-                state["tumblr_posts_count"] = int(state.get("tumblr_posts_count", 0)) + 1
-                self._save_state(state)
+                    state["tumblr_last_post_at"] = now
+                    daily_count += 1
+                    daily_posts[today_str] = daily_count
+                    state["tumblr_posts_count"] = int(state.get("tumblr_posts_count", 0)) + 1
+                    self._save_state(state)
+            except Exception as exc:
+                logger.error("Tumblr publish_post execution failed: %s", exc)
 
         # Build informative Telegram notification
         title_escaped = html.escape(candidate.title)
@@ -162,11 +165,14 @@ class TumblrRunner:
         posted_live = False
         reblog_url = None
         if self.client.is_configured() and (getattr(self.settings, "tumblr_auto_publish", False) or force):
-            res = self.publisher.publish_reblog(candidate, use_queue=use_queue)
-            if res.get("status") == "success":
-                posted_live = True
-                blog_id = self.client._normalize_blog_id()
-                reblog_url = f"https://{blog_id}"
+            try:
+                res = self.publisher.publish_reblog(candidate, use_queue=use_queue)
+                if res.get("status") == "success":
+                    posted_live = True
+                    blog_id = self.client._normalize_blog_id()
+                    reblog_url = f"https://{blog_id}"
+            except Exception as exc:
+                logger.error("Tumblr publish_reblog execution failed: %s", exc)
 
         # Dispatch Telegram notification
         status_badge = "🔄 <b>[AUTONOMOUSLY REBLOGGED ON TUMBLR]</b>" if posted_live else "💡 <b>TUMBLR REBLOG MATCH (DRY RUN)</b>"
