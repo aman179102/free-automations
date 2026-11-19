@@ -17,8 +17,18 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 
 
 def build_inline_keyboard(rows: list[list[dict[str, str]]]) -> dict[str, Any]:
-    """Wraps rows of button dicts into a Telegram inline_keyboard structure."""
-    return {"inline_keyboard": rows}
+    """Wraps rows of button dicts into a Telegram inline_keyboard structure, filtering invalid URLs."""
+    valid_rows: list[list[dict[str, str]]] = []
+    for row in rows:
+        valid_row: list[dict[str, str]] = []
+        for btn in row:
+            btn_url = btn.get("url", "")
+            # Telegram inline keyboard only accepts http://, https://, or tg://
+            if btn_url.startswith(("http://", "https://", "tg://")):
+                valid_row.append(btn)
+        if valid_row:
+            valid_rows.append(valid_row)
+    return {"inline_keyboard": valid_rows}
 
 
 def build_hn_button(item_id: int | str, text: str = "🧡 Open on Hacker News") -> dict[str, str]:
@@ -30,19 +40,17 @@ def build_mailto_button(
     email: str,
     subject: str = "",
     body: str = "",
-    text: str = "✉️ 1-Tap Email Founder",
+    text: str = "✉️ 1-Tap Gmail Pitch",
 ) -> dict[str, str]:
-    """1-Tap mobile mailto intent with pre-filled pitch subject and body."""
-    params: dict[str, str] = {}
+    """1-Tap webmail composer intent (HTTPS compliant with Telegram bot inline keyboards)."""
+    params: dict[str, str] = {"view": "cm", "fs": "1", "to": email}
     if subject:
-        params["subject"] = subject
+        params["su"] = subject
     if body:
         params["body"] = body
 
-    query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-    url = f"mailto:{email}"
-    if query:
-        url += f"?{query}"
+    query = urllib.parse.urlencode(params)
+    url = f"https://mail.google.com/mail/?{query}"
     return {"text": text, "url": url}
 
 
