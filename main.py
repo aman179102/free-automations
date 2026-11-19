@@ -28,6 +28,10 @@ def _cli_parser() -> argparse.ArgumentParser:
     group.add_argument("--hn-discussion", action="store_true", help="Find top Ask HN engineering questions and draft senior architecture answers")
     group.add_argument("--hn-showcase", action="store_true", help="Draft Show HN posts showcasing Aman's systems engineering projects")
     group.add_argument("--hn-all", action="store_true", help="Run full suite of Hacker News automations")
+    group.add_argument("--itch-devlog", action="store_true", help="Generate/publish high-signal systems & simulation devlog to itch.io")
+    group.add_argument("--itch-radar", action="store_true", help="Scan game jams filtering for AI, systems, tools, Python, Go, and Rust")
+    group.add_argument("--itch-analytics", action="store_true", help="Track project views, downloads, and purchases on itch.io")
+    group.add_argument("--itch-all", action="store_true", help="Run full suite of itch.io automations and send consolidated digest")
     group.add_argument("--server", action="store_true", help="Launch lightweight HTTP health check and webhook server")
 
     parser.add_argument("--daemon", action="store_true", help="Run in continuous background loop")
@@ -87,6 +91,38 @@ def run_hn_action(
         return True
     except Exception as exc:
         logger.error("Failed to execute HN %s: %s", action, exc)
+        return False
+
+
+def run_itch_action(
+    action: str,
+    settings,
+    dry_run: bool = False,
+    auto_publish: bool = False,
+) -> bool:
+    """Invokes the itch.io automation runner."""
+    try:
+        from automations.itch import runner as itch_runner
+    except ImportError as exc:
+        logger.error("itch.io automation module not available: %s", exc)
+        print("⚠️  automations.itch is currently not installed or under construction.")
+        return False
+
+    try:
+        logger.info("Executing itch.io action '%s' (dry_run=%s, auto_publish=%s)...", action, dry_run, auto_publish)
+        if action == "devlog":
+            res = itch_runner.run_devlog(settings, dry_run=dry_run, force=auto_publish)
+        elif action == "radar":
+            res = itch_runner.run_radar(settings, dry_run=dry_run)
+        elif action == "analytics":
+            res = itch_runner.run_analytics(settings, dry_run=dry_run)
+        elif action == "all":
+            res = itch_runner.run_all(settings, dry_run=dry_run, force=auto_publish)
+        else:
+            return False
+        return res.get("status") in ("success", "skipped")
+    except Exception as exc:
+        logger.error("Failed to execute itch %s: %s", action, exc)
         return False
 
 
@@ -151,6 +187,23 @@ def main() -> int:
 
     if args.hn_all:
         ok = run_hn_action("all", settings, dry_run=args.dry_run, auto_publish=args.live, discussion_mode=args.discussion_mode)
+        return 0 if ok else 1
+
+    # 6. itch.io commands
+    if args.itch_devlog:
+        ok = run_itch_action("devlog", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    if args.itch_radar:
+        ok = run_itch_action("radar", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    if args.itch_analytics:
+        ok = run_itch_action("analytics", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    if args.itch_all:
+        ok = run_itch_action("all", settings, dry_run=args.dry_run, auto_publish=args.live)
         return 0 if ok else 1
 
     # Default if no arguments provided: print help

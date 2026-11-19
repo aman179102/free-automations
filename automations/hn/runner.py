@@ -118,6 +118,7 @@ class HNRunner:
             self._mark_seen(state, lead.id, key="seen_hiring_ids")
 
         # Consolidate into a SINGLE digest message to avoid Telegram flood
+        target_thread_id = getattr(new_leads[0], "story_id", None) if new_leads else None
         if send_telegram and new_leads and self.settings and getattr(self.settings, "has_telegram", False):
             msg_parts = [
                 f"🎯 <b>[HN HIRING RADAR] {len(new_leads)} New Remote Lead(s) Found</b>\n",

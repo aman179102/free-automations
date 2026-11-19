@@ -47,6 +47,40 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
             logger.error("Error executing tumblr_reblog: %s", exc)
             return False
 
+    # Handle itch.io Actions
+    if action in ("itch", "itch_all", "itch_run"):
+        try:
+            from automations.itch import runner as itch_runner
+            itch_runner.run_all(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing itch_all: %s", exc)
+            return False
+    elif action in ("itch_devlog", "itch_post"):
+        try:
+            from automations.itch import runner as itch_runner
+            itch_runner.run_devlog(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing itch_devlog: %s", exc)
+            return False
+    elif action in ("itch_radar", "itch_jams"):
+        try:
+            from automations.itch import runner as itch_runner
+            itch_runner.run_radar(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing itch_radar: %s", exc)
+            return False
+    elif action in ("itch_analytics", "itch_stats"):
+        try:
+            from automations.itch import runner as itch_runner
+            itch_runner.run_analytics(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing itch_analytics: %s", exc)
+            return False
+
     try:
         from automations.hn import runner
     except ImportError:
@@ -75,6 +109,12 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
                     tumblr_runner.run_all(settings)
                 except Exception as t_exc:
                     logger.warning("Tumblr cycle error during 'all' run: %s", t_exc)
+            if getattr(settings, "has_itch", False):
+                try:
+                    from automations.itch import runner as itch_runner
+                    itch_runner.run_all(settings)
+                except Exception as i_exc:
+                    logger.warning("itch.io cycle error during 'all' run: %s", i_exc)
             return True
         elif hasattr(runner, "dispatch_action"):
             return runner.dispatch_action(action, settings, extra or {})
@@ -114,6 +154,18 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
     elif text.startswith("/tumblr"):
         send_telegram_message(settings, "🚀 <b>[Tumblr Auto-Pilot Triggered]</b> Running full Tumblr cycle...")
         _dispatch_automation_job("tumblr", settings)
+    elif text.startswith("/itch_devlog"):
+        send_telegram_message(settings, "📝 <b>[Itch Devlog Triggered]</b> Generating systems & simulation devlog...")
+        _dispatch_automation_job("itch_devlog", settings)
+    elif text.startswith("/itch_radar") or text.startswith("/jams"):
+        send_telegram_message(settings, "🎯 <b>[Itch Jam Radar Triggered]</b> Scanning game jams for AI/Systems/Go/Rust...")
+        _dispatch_automation_job("itch_radar", settings)
+    elif text.startswith("/itch_analytics") or text.startswith("/itch_stats"):
+        send_telegram_message(settings, "📊 <b>[Itch Analytics Triggered]</b> Tracking views, downloads, and purchases...")
+        _dispatch_automation_job("itch_analytics", settings)
+    elif text.startswith("/itch"):
+        send_telegram_message(settings, "👾 <b>[Itch Auto-Pilot Triggered]</b> Running full itch.io engine cycle...")
+        _dispatch_automation_job("itch", settings)
     elif text.startswith("/status"):
         user_str = settings.hn_username or "Unconfigured"
         auto_str = "Active (Auto-Pilot)" if settings.hn_auto_publish else "Dry-Run"
@@ -147,6 +199,17 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             except Exception:
                 t_auth = "⚠️ Check Keys"
 
+        i_user = getattr(settings, "itch_username", "") or "aman179102"
+        i_auth = "❌ Unconfigured"
+        i_auto = "Active (Auto-Pilot)" if getattr(settings, "itch_auto_publish", False) else "Dry-Run"
+        if getattr(settings, "has_itch", False):
+            try:
+                from automations.itch.api import ItchAPIClient
+                i_client = ItchAPIClient(settings)
+                i_auth = "✅ Active & Configured" if i_client.verify_credentials() else "⚠️ Check Key"
+            except Exception:
+                i_auth = "⚠️ Check Key"
+
         status_msg = (
             f"📊 <b>[FREE-AUTOMATIONS SERVER STATUS]</b>\n\n"
             f"🧡 <b>Hacker News Engine:</b>\n"
@@ -157,12 +220,20 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             f"🎨 <b>Tumblr Engine:</b>\n"
             f"• 🏢 <b>Blog:</b> <code>{t_blog}</code>\n"
             f"• 🔐 <b>OAuth:</b> {t_auth}\n\n"
+            f"👾 <b>itch.io Engine:</b>\n"
+            f"• 👤 <b>Creator:</b> <code>{i_user}</code>\n"
+            f"• 🔐 <b>API v1:</b> {i_auth}\n"
+            f"• 🚀 <b>Mode:</b> <code>{i_auto}</code>\n\n"
             f"⚙️ <b>Available Commands:</b>\n"
             f"• /run - Trigger full autonomous cycle\n"
             f"• /comment - Comment on popular & rising HN posts\n"
             f"• /showcase - Submit next Show HN post\n"
             f"• /tumblr_post - Publish educational tech card\n"
             f"• /tumblr_reblog - Reblog curated community post\n"
+            f"• /itch_devlog - Generate/publish systems devlog\n"
+            f"• /itch_radar - Scan game jams (AI/Systems/Go/Rust)\n"
+            f"• /itch_analytics - Track views/downloads/purchases\n"
+            f"• /itch - Run complete itch.io cycle\n"
             f"• /hiring - Scan monthly Who is Hiring radar\n"
             f"• /status - View this live status report"
         )
@@ -171,11 +242,16 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
         help_text = (
             "🤖 <b>Free-Automations 100% Autonomous Server</b>\n\n"
             "Available Auto-Pilot commands (Zero Buttons Needed):\n"
-            "• /run - Trigger full autonomous cycle (comments + showcase + hiring)\n"
+            "• /run - Trigger full autonomous cycle (HN + Tumblr + itch.io)\n"
             "• /comment - Discover popular & rising posts and comment\n"
             "• /showcase - Autonomously publish Show HN post\n"
+            "• /tumblr - Run Tumblr aesthetic tech post & curation\n"
+            "• /itch - Run full itch.io devlog, jam radar & analytics\n"
+            "• /itch_devlog - Publish systems/game tools devlog\n"
+            "• /itch_radar - Scan AI/systems/tools game jams\n"
+            "• /itch_analytics - View views, downloads & purchases\n"
             "• /hiring - Scan HN Who is Hiring & match remote roles\n"
-            "• /status - Live HN account karma & server health check"
+            "• /status - Live HN karma, Tumblr auth, itch.io status"
         )
         send_telegram_message(settings, help_text)
 
@@ -213,6 +289,10 @@ class AutomationHandler(BaseHTTPRequestHandler):
                     "POST /trigger/tumblr/post",
                     "POST /trigger/tumblr/reblog",
                     "POST /trigger/tumblr/all",
+                    "POST /trigger/itch/devlog",
+                    "POST /trigger/itch/radar",
+                    "POST /trigger/itch/analytics",
+                    "POST /trigger/itch/all",
                     "POST /webhook",
                 ],
                 "time_utc": datetime.now(timezone.utc).isoformat(),
@@ -257,6 +337,14 @@ class AutomationHandler(BaseHTTPRequestHandler):
             action = "tumblr_reblog"
         elif path in ("/trigger/tumblr/all", "/trigger/tumblr", "/trigger_tumblr", "/tumblr"):
             action = "tumblr"
+        elif path in ("/trigger/itch/devlog", "/trigger_itch_devlog", "/itch_devlog"):
+            action = "itch_devlog"
+        elif path in ("/trigger/itch/radar", "/trigger_itch_radar", "/itch_radar", "/trigger/itch/jams"):
+            action = "itch_radar"
+        elif path in ("/trigger/itch/analytics", "/trigger_itch_analytics", "/itch_analytics", "/trigger/itch/stats"):
+            action = "itch_analytics"
+        elif path in ("/trigger/itch/all", "/trigger/itch", "/trigger_itch", "/itch"):
+            action = "itch"
         elif path in ("/webhook", "/telegram_webhook"):
             # Telegram Webhook endpoint - respond immediately with 200 OK
             self.send_response(200)

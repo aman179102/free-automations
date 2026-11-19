@@ -76,6 +76,11 @@ class Settings:
     tumblr_blog_name: str = ""
     tumblr_auto_publish: bool = False
 
+    # itch.io Autonomous Engine
+    itch_api_key: str = ""
+    itch_username: str = ""
+    itch_auto_publish: bool = False
+
     # Runtime & Paths
     timezone: str = "Asia/Kolkata"
     port: int = 10000
@@ -103,6 +108,11 @@ class Settings:
             and self.tumblr_oauth_token_secret
             and self.tumblr_blog_name
         )
+
+    @property
+    def has_itch(self) -> bool:
+        """Returns True if itch.io API key is present."""
+        return bool(self.itch_api_key)
 
 
 def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
@@ -147,6 +157,13 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         raw_tumblr_auto = os.getenv("TUMBLR_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
     tumblr_auto_publish = bool(raw_tumblr_auto)
 
+    itch_api_key = str(overrides.get("itch_api_key") or get_str("ITCH_API_KEY"))
+    itch_username = str(overrides.get("itch_username") or get_str("ITCH_USERNAME", default="aman179102"))
+    raw_itch_auto = overrides.get("itch_auto_publish")
+    if raw_itch_auto is None:
+        raw_itch_auto = os.getenv("ITCH_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
+    itch_auto_publish = bool(raw_itch_auto)
+
     tz_str = str(overrides.get("timezone") or get_str("TIMEZONE", default="Asia/Kolkata"))
     port = int(overrides.get("port") or int(os.getenv("PORT", "10000")))
     render_external_url = str(overrides.get("render_external_url") or get_str("RENDER_EXTERNAL_URL", default=""))
@@ -181,6 +198,9 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         tumblr_oauth_token_secret=tumblr_oauth_token_secret,
         tumblr_blog_name=tumblr_blog_name,
         tumblr_auto_publish=tumblr_auto_publish,
+        itch_api_key=itch_api_key,
+        itch_username=itch_username,
+        itch_auto_publish=itch_auto_publish,
         timezone=tz_str,
         port=port,
         render_external_url=render_external_url,
