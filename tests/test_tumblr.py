@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from automations.tumblr.api import TumblrAPIClient, TumblrAPIError
 from automations.tumblr.content import generate_tumblr_post
 from automations.tumblr.publisher import TumblrPublisher
@@ -43,7 +45,7 @@ class TestTumblrModule(unittest.TestCase):
         self.assertEqual(client._normalize_blog_id("aman179102"), "aman179102.tumblr.com")
         self.assertEqual(client._normalize_blog_id("aman179102.tumblr.com"), "aman179102.tumblr.com")
 
-    @patch("httpx.Client.post")
+    @patch.object(requests.Session, "post")
     def test_create_text_post(self, mock_post):
         mock_resp = MagicMock()
         mock_resp.status_code = 201
@@ -63,7 +65,7 @@ class TestTumblrModule(unittest.TestCase):
         self.assertEqual(call_kwargs["data"]["tags"], "programming,databases")
         self.assertEqual(call_kwargs["data"]["state"], "published")
 
-    @patch("httpx.Client.post")
+    @patch.object(requests.Session, "post")
     def test_reblog_post(self, mock_post):
         mock_resp = MagicMock()
         mock_resp.status_code = 201

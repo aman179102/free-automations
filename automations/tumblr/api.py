@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-import httpx
-from authlib.integrations.httpx_client import OAuth1Auth
+import requests
+from requests.adapters import HTTPAdapter
+from requests_oauthlib import OAuth1
+from urllib3.util.retry import Retry
 
 from common.config import Settings
 
@@ -20,7 +22,7 @@ class TumblrAPIError(RuntimeError):
 
 class TumblrAPIClient:
     """
-    Official Tumblr API v2 Client using OAuth 1.0a authentication.
+    Official Tumblr API v2 Client using OAuth 1.0a authentication via requests-oauthlib.
     Handles user info, creating posts (published or queued), reblogging with commentary,
     and exploring tagged community posts.
     """
@@ -33,24 +35,28 @@ class TumblrAPIClient:
         self.oauth_token_secret = getattr(settings, "tumblr_oauth_token_secret", "") or ""
         self.blog_name = getattr(settings, "tumblr_blog_name", "") or ""
 
-        self._auth: Optional[OAuth1Auth] = None
+        self._auth: Optional[OAuth1] = None
         if self.is_configured():
-            self._auth = OAuth1Auth(
-                client_id=self.consumer_key,
+            self._auth = OAuth1(
+                client_key=self.consumer_key,
                 client_secret=self.consumer_secret,
-                token=self.oauth_token,
-                token_secret=self.oauth_token_secret,
+                resource_owner_key=self.oauth_token,
+                resource_owner_secret=self.oauth_token_secret,
             )
 
-        transport = httpx.HTTPTransport(retries=3)
-        self.client = httpx.Client(
-            base_url=TUMBLR_API_BASE,
-            timeout=30.0,
-            transport=transport,
-            headers={
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            },
+        self.session = requests.Session()
+        retries = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[500, 502, 503, 504],
+            raise_on_status=False,
         )
+        adapter = HTTPAdapter(max_retries=retries)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        })
 
     def is_configured(self) -> bool:
         """Returns True if all OAuth credentials are provided."""
@@ -74,7 +80,8 @@ class TumblrAPIClient:
         """Fetches the authenticated user's account info and blog roster."""
         if not self._auth:
             raise TumblrAPIError("Tumblr API client is not authenticated (missing OAuth credentials).")
-        resp = self.client.get("/user/info", auth=self._auth)
+        url = f"{TUMBLR_API_BASE}/user/info"
+        resp = self.session.get(url, auth=self._auth, timeout=25.0)
         if resp.status_code != 200:
             logger.error("Failed to get Tumblr user info (%d): %s", resp.status_code, resp.text)
             raise TumblrAPIError(f"HTTP {resp.status_code}: {resp.text}")
@@ -109,7 +116,7 @@ class TumblrAPIClient:
             raise TumblrAPIError("Cannot create post: Tumblr client is not authenticated.")
 
         blog_id = self._normalize_blog_id(blog_identifier)
-        endpoint = f"/blog/{blog_id}/post"
+        url = f"{TUMBLR_API_BASE}/blog/{blog_id}/post"
 
         data: dict[str, Any] = {
             "type": "text",
@@ -119,11 +126,10 @@ class TumblrAPIClient:
             "state": state,
         }
         if tags:
-            # Clean and sanitize tags (strip '#' and leading/trailing whitespace)
             clean_tags = [t.lstrip("#").strip() for t in tags if t.strip()]
             data["tags"] = ",".join(clean_tags)
 
-        resp = self.client.post(endpoint, data=data, auth=self._auth)
+        resp = self.session.post(url, data=data, auth=self._auth, timeout=30.0)
         if resp.status_code not in (200, 201):
             logger.error("Failed to create Tumblr post on '%s' (%d): %s", blog_id, resp.status_code, resp.text)
             raise TumblrAPIError(f"HTTP {resp.status_code}: {resp.text}")
@@ -148,7 +154,7 @@ class TumblrAPIClient:
             raise TumblrAPIError("Cannot reblog: Tumblr client is not authenticated.")
 
         blog_id = self._normalize_blog_id(blog_identifier)
-        endpoint = f"/blog/{blog_id}/post/reblog"
+        url = f"{TUMBLR_API_BASE}/blog/{blog_id}/post/reblog"
 
         data: dict[str, Any] = {
             "id": str(post_id),
@@ -160,7 +166,7 @@ class TumblrAPIClient:
             clean_tags = [t.lstrip("#").strip() for t in tags if t.strip()]
             data["tags"] = ",".join(clean_tags)
 
-        resp = self.client.post(endpoint, data=data, auth=self._auth)
+        resp = self.session.post(url, data=data, auth=self._auth, timeout=30.0)
         if resp.status_code not in (200, 201):
             logger.error("Failed to reblog Tumblr post #%s (%d): %s", post_id, resp.status_code, resp.text)
             raise TumblrAPIError(f"HTTP {resp.status_code}: {resp.text}")
@@ -178,13 +184,14 @@ class TumblrAPIClient:
             return []
 
         clean_tag = tag.lstrip("#").strip()
+        url = f"{TUMBLR_API_BASE}/tagged"
         params = {
             "api_key": self.consumer_key,
             "tag": clean_tag,
             "limit": min(limit, 20),
         }
         try:
-            resp = self.client.get("/tagged", params=params)
+            resp = self.session.get(url, params=params, timeout=25.0)
             if resp.status_code == 200:
                 posts = resp.json().get("response", [])
                 return posts if isinstance(posts, list) else []
