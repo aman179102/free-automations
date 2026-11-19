@@ -81,9 +81,9 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
         try:
             from automations.hn.publisher import HNPublisher
             pub = HNPublisher(settings)
-            is_logged = pub.is_logged_in()
-        except Exception:
-            pass
+            is_logged = pub.ensure_authenticated()
+        except Exception as exc:
+            logger.warning("Status check authentication error: %s", exc)
         login_str = "✅ Active & Authenticated" if is_logged else "❌ Session Inactive"
 
         karma_str = "N/A"

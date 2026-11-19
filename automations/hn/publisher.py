@@ -38,6 +38,13 @@ class HNPublisher:
             follow_redirects=True,
             timeout=25.0,
         )
+        if not self.cookie:
+            try:
+                state_data = load_state(self._get_state_file())
+                self.cookie = str(state_data.get("hn_cookie", "") or "")
+            except Exception:
+                pass
+
         if self.cookie:
             self.client.cookies.set("user", self.cookie, domain="news.ycombinator.com")
 
