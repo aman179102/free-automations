@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+output/
+state/*
+!state/.gitkeep
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
