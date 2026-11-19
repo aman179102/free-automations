@@ -51,7 +51,8 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
     if action in ("itch", "itch_all", "itch_run"):
         try:
             from automations.itch import runner as itch_runner
-            itch_runner.run_all(settings)
+            is_forced = bool(extra and extra.get("force")) if extra else (action in ("itch", "itch_all"))
+            itch_runner.run_all(settings, force=is_forced)
             return True
         except Exception as exc:
             logger.error("Error executing itch_all: %s", exc)

@@ -795,6 +795,27 @@ class TestItchModule(unittest.TestCase):
         # CRITICAL: Verify strictly ONE Telegram message was dispatched (no duplicate or spam messages)
         self.assertEqual(mock_telegram.call_count, 1)
 
+    @patch("automations.itch.runner.send_telegram_message")
+    def test_runner_run_all_suppresses_telegram_when_no_new_activity(self, mock_telegram):
+        """Verifies runner suppresses Telegram dispatch during scheduled runs when there are no new deltas or jams."""
+        mock_client = MagicMock()
+        mock_client.is_configured.return_value = True
+        mock_client.get_my_games.return_value = []
+        mock_client.get_jams.return_value = []
+
+        runner = ItchRunner(self.mock_settings, client=mock_client)
+        # Pre-seed state with recent devlog so cooldown is active
+        state_file = self.state_dir / "itch_state.json"
+        state_file.write_text(json.dumps({"itch_last_devlog_at": 2000000000.0}))
+
+        with patch("time.time", return_value=2000003600.0):
+            result = runner.run_all(force=False, dry_run=False)
+
+        self.assertEqual(result["status"], "success")
+        self.assertFalse(result.get("telegram_dispatched"))
+        # ZERO spam: Telegram should NOT be called when nothing changed
+        self.assertEqual(mock_telegram.call_count, 0)
+
     # =========================================================================
     # 8. Server Endpoints & Route Verification
     # =========================================================================

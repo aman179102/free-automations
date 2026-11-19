@@ -306,7 +306,7 @@ class ItchRunner:
         digest_lines.append("─────────────────────────────")
 
         # Section B: Jam Radar
-        highlight_jams = fresh_jams if fresh_jams else all_jams
+        highlight_jams = fresh_jams if fresh_jams else (all_jams if force else [])
         if highlight_jams:
             digest_lines.append(f"🎯 <b>RADAR: MATCHED JAMS ({len(highlight_jams)}):</b>")
             for j in highlight_jams[:2]:
@@ -316,7 +316,7 @@ class ItchRunner:
                     f"   🏷️ <i>{j.tags_label}</i> (Score: {j.score} pts)"
                 )
         else:
-            digest_lines.append("🎯 <b>RADAR:</b> <i>No active tech jams currently matched.</i>")
+            digest_lines.append("🎯 <b>RADAR:</b> <i>No new tech jams since last scan.</i>")
 
         digest_lines.append("─────────────────────────────")
 
@@ -357,9 +357,22 @@ class ItchRunner:
 
         consolidated_text = "\n".join(digest_lines)
 
-        # Dispatch single consolidated message
-        if not dry_run:
+        # Dispatch single consolidated message strictly when there is fresh activity or force=True
+        has_new_activity = (
+            (report and (report.delta_views > 0 or report.delta_downloads > 0 or report.delta_purchases > 0))
+            or bool(fresh_jams)
+            or bool(devlog_res.get("published"))
+            or force
+        )
+
+        dispatched = False
+        if not dry_run and has_new_activity:
             self._dispatch_telegram(consolidated_text, reply_markup=reply_markup)
+            dispatched = True
+        else:
+            logger.info(
+                "itch.io run_all complete: no new deltas, jams, or publications. Telegram dispatch suppressed (zero-spam guarantee)."
+            )
 
         return {
             "status": "success",
@@ -367,6 +380,7 @@ class ItchRunner:
             "radar": radar_res,
             "devlog": devlog_res,
             "consolidated_digest": consolidated_text,
+            "telegram_dispatched": dispatched,
         }
 
 
