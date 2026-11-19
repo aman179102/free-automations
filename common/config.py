@@ -81,6 +81,11 @@ class Settings:
     itch_username: str = ""
     itch_auto_publish: bool = False
 
+    # Qiita Official API v2 Engine
+    qiita_access_token: str = ""
+    qiita_username: str = ""
+    qiita_auto_publish: bool = False
+
     # Runtime & Paths
     timezone: str = "Asia/Kolkata"
     port: int = 10000
@@ -113,6 +118,11 @@ class Settings:
     def has_itch(self) -> bool:
         """Returns True if itch.io API key is present."""
         return bool(self.itch_api_key)
+
+    @property
+    def has_qiita(self) -> bool:
+        """Returns True if Qiita access token is present."""
+        return bool(self.qiita_access_token)
 
 
 def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
@@ -164,6 +174,13 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         raw_itch_auto = os.getenv("ITCH_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
     itch_auto_publish = bool(raw_itch_auto)
 
+    qiita_access_token = str(overrides.get("qiita_access_token") or get_str("QIITA_ACCESS_TOKEN"))
+    qiita_username = str(overrides.get("qiita_username") or get_str("QIITA_USERNAME", default="aman179102"))
+    raw_qiita_auto = overrides.get("qiita_auto_publish")
+    if raw_qiita_auto is None:
+        raw_qiita_auto = os.getenv("QIITA_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
+    qiita_auto_publish = bool(raw_qiita_auto)
+
     tz_str = str(overrides.get("timezone") or get_str("TIMEZONE", default="Asia/Kolkata"))
     port = int(overrides.get("port") or int(os.getenv("PORT", "10000")))
     render_external_url = str(overrides.get("render_external_url") or get_str("RENDER_EXTERNAL_URL", default=""))
@@ -201,6 +218,9 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         itch_api_key=itch_api_key,
         itch_username=itch_username,
         itch_auto_publish=itch_auto_publish,
+        qiita_access_token=qiita_access_token,
+        qiita_username=qiita_username,
+        qiita_auto_publish=qiita_auto_publish,
         timezone=tz_str,
         port=port,
         render_external_url=render_external_url,

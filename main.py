@@ -32,6 +32,10 @@ def _cli_parser() -> argparse.ArgumentParser:
     group.add_argument("--itch-radar", action="store_true", help="Scan game jams filtering for AI, systems, tools, Python, Go, and Rust")
     group.add_argument("--itch-analytics", action="store_true", help="Track project views, downloads, and purchases on itch.io")
     group.add_argument("--itch-all", action="store_true", help="Run full suite of itch.io automations and send consolidated digest")
+    group.add_argument("--qiita-article", action="store_true", help="Generate/publish high-signal Tech Japanese article to Qiita")
+    group.add_argument("--qiita-radar", action="store_true", help="Scan Qiita tech trends & tag radar (#Python, #AI, #FastAPI, #Go, #Rust)")
+    group.add_argument("--qiita-analytics", action="store_true", help="Track Qiita LGTM, Stocks, and Views with delta computation")
+    group.add_argument("--qiita-all", action="store_true", help="Run full suite of Qiita automations and send consolidated digest")
     group.add_argument("--server", action="store_true", help="Launch lightweight HTTP health check and webhook server")
 
     parser.add_argument("--daemon", action="store_true", help="Run in continuous background loop")
@@ -126,6 +130,38 @@ def run_itch_action(
         return False
 
 
+def run_qiita_action(
+    action: str,
+    settings,
+    dry_run: bool = False,
+    auto_publish: bool = False,
+) -> bool:
+    """Invokes the Qiita automation runner."""
+    try:
+        from automations.qiita import runner as qiita_runner
+    except ImportError as exc:
+        logger.error("Qiita automation module not available: %s", exc)
+        print("⚠️  automations.qiita is currently not installed or under construction.")
+        return False
+
+    try:
+        logger.info("Executing Qiita action '%s' (dry_run=%s, auto_publish=%s)...", action, dry_run, auto_publish)
+        if action == "article":
+            res = qiita_runner.run_article(settings, dry_run=dry_run, force=auto_publish)
+        elif action == "radar":
+            res = qiita_runner.run_radar(settings, dry_run=dry_run)
+        elif action == "analytics":
+            res = qiita_runner.run_analytics(settings, dry_run=dry_run)
+        elif action == "all":
+            res = qiita_runner.run_all(settings, dry_run=dry_run, force=auto_publish)
+        else:
+            return False
+        return res.get("status") in ("success", "skipped")
+    except Exception as exc:
+        logger.error("Failed to execute Qiita %s: %s", action, exc)
+        return False
+
+
 def main() -> int:
     parser = _cli_parser()
     args = parser.parse_args()
@@ -204,6 +240,23 @@ def main() -> int:
 
     if args.itch_all:
         ok = run_itch_action("all", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    # 7. Qiita commands
+    if args.qiita_article:
+        ok = run_qiita_action("article", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    if args.qiita_radar:
+        ok = run_qiita_action("radar", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    if args.qiita_analytics:
+        ok = run_qiita_action("analytics", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    if args.qiita_all:
+        ok = run_qiita_action("all", settings, dry_run=args.dry_run, auto_publish=args.live)
         return 0 if ok else 1
 
     # Default if no arguments provided: print help

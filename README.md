@@ -64,6 +64,15 @@ free-automations/
 - **Stealth & Anti-Ban Cooldown Gate**: Enforces a 30-minute minimum delay between comments and 3 days between story submissions to prevent shadowbans or rate-limiting.
 - **Hiring Radar**: Filters "Who is Hiring?" threads for strictly 100% remote Golang, Python, FastAPI, and MVP developer roles; extracts founder contacts and drafts personalized pitches citing Aman's GitHub.
 
+### 5. Qiita Autonomous Tech Publishing Engine (`automations/qiita/`)
+- Powered by official Qiita API v2:
+  - **API Client**: `https://qiita.com/api/v2` with Bearer auth, exponential backoff, and automatic retries.
+  - **Tech Japanese Article Generator**: 80% natural Japanese + 20% technical English ("Tech Japanese") with real working Python/FastAPI/async code blocks, clean ASCII architecture diagrams, 5 curated deep-dive templates, AI fallback, and strict 0.1% rule (zero spam links).
+  - **Tech Trend & Tag Radar**: Scans Qiita articles under `#Python`, `#AI`, `#FastAPI`, `#Go`, `#Rust` with state deduplication (`seen_qiita_item_ids`).
+  - **Creator Analytics Tracker**: Tracks LGTM (Likes), Stocks (Bookmarks), and Page Views with delta computation against prior state.
+  - **Anti-Ban Safety Engine**: Human typing & review jitter delays (5.0s - 12.0s), max 1-2 daily posts cap, and strict content validation gates.
+  - **Orchestrator Runner**: 24-hour publication cooldown enforcement, state tracking in `state/qiita_state.json`, and single clean consolidated Telegram digest (zero spam: suppressed during background runs when no new deltas or posts).
+
 ---
 
 ## 🚀 Quick Start Guide
@@ -130,6 +139,28 @@ python main.py --hn-discussion --discussion-mode rising --live
 Submit next project in Show HN rotation:
 ```bash
 python main.py --hn-showcase --live
+```
+
+### Qiita Autonomous Engine Commands
+
+Generate/publish Tech Japanese article to Qiita:
+```bash
+python main.py --qiita-article
+```
+
+Scan Qiita tech trends & tag radar (#Python, #AI, #FastAPI, #Go, #Rust):
+```bash
+python main.py --qiita-radar
+```
+
+Track Qiita LGTM, Stocks, and Views with delta computation:
+```bash
+python main.py --qiita-analytics
+```
+
+Run full suite of Qiita automations and send consolidated digest:
+```bash
+python main.py --qiita-all
 ```
 
 Run 24/7 background autopilot daemon (every 30 mins):

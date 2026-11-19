@@ -82,6 +82,42 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
             logger.error("Error executing itch_analytics: %s", exc)
             return False
 
+    # Handle Qiita Actions
+    if action in ("qiita", "qiita_all", "qiita_run"):
+        try:
+            from automations.qiita import runner as qiita_runner
+            is_forced = bool(extra and extra.get("force")) if extra else (action in ("qiita", "qiita_all"))
+            qiita_runner.run_all(settings, force=is_forced)
+            return True
+        except Exception as exc:
+            logger.error("Error executing qiita_all: %s", exc)
+            return False
+    elif action in ("qiita_article", "qiita_publish", "qiita_post"):
+        try:
+            from automations.qiita import runner as qiita_runner
+            is_forced = bool(extra and extra.get("force")) if extra else False
+            qiita_runner.run_article(settings, force=is_forced)
+            return True
+        except Exception as exc:
+            logger.error("Error executing qiita_article: %s", exc)
+            return False
+    elif action in ("qiita_radar", "qiita_trend", "qiita_tags"):
+        try:
+            from automations.qiita import runner as qiita_runner
+            qiita_runner.run_radar(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing qiita_radar: %s", exc)
+            return False
+    elif action in ("qiita_analytics", "qiita_stats"):
+        try:
+            from automations.qiita import runner as qiita_runner
+            qiita_runner.run_analytics(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing qiita_analytics: %s", exc)
+            return False
+
     try:
         from automations.hn import runner
     except ImportError:
@@ -116,6 +152,12 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
                     itch_runner.run_all(settings)
                 except Exception as i_exc:
                     logger.warning("itch.io cycle error during 'all' run: %s", i_exc)
+            if getattr(settings, "has_qiita", False):
+                try:
+                    from automations.qiita import runner as qiita_runner
+                    qiita_runner.run_all(settings)
+                except Exception as q_exc:
+                    logger.warning("Qiita cycle error during 'all' run: %s", q_exc)
             return True
         elif hasattr(runner, "dispatch_action"):
             return runner.dispatch_action(action, settings, extra or {})
@@ -167,6 +209,18 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
     elif text.startswith("/itch"):
         send_telegram_message(settings, "👾 <b>[Itch Auto-Pilot Triggered]</b> Running full itch.io engine cycle...")
         _dispatch_automation_job("itch", settings)
+    elif text.startswith("/qiita_article") or text.startswith("/qiita_post"):
+        send_telegram_message(settings, "📝 <b>[Qiita Article Triggered]</b> Generating Tech Japanese article...")
+        _dispatch_automation_job("qiita_article", settings)
+    elif text.startswith("/qiita_radar") or text.startswith("/qiita_tags"):
+        send_telegram_message(settings, "🎯 <b>[Qiita Radar Triggered]</b> Scanning tags (#Python, #AI, #FastAPI, #Go, #Rust)...")
+        _dispatch_automation_job("qiita_radar", settings)
+    elif text.startswith("/qiita_analytics") or text.startswith("/qiita_stats"):
+        send_telegram_message(settings, "📊 <b>[Qiita Analytics Triggered]</b> Tracking LGTM, Stocks & Views...")
+        _dispatch_automation_job("qiita_analytics", settings)
+    elif text.startswith("/qiita"):
+        send_telegram_message(settings, "📗 <b>[Qiita Auto-Pilot Triggered]</b> Running full Qiita engine cycle...")
+        _dispatch_automation_job("qiita", settings)
     elif text.startswith("/status"):
         user_str = settings.hn_username or "Unconfigured"
         auto_str = "Active (Auto-Pilot)" if settings.hn_auto_publish else "Dry-Run"
@@ -211,6 +265,17 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             except Exception:
                 i_auth = "⚠️ Check Key"
 
+        q_user = getattr(settings, "qiita_username", "") or "aman179102"
+        q_auth = "❌ Unconfigured"
+        q_auto = "Active (Auto-Pilot)" if getattr(settings, "qiita_auto_publish", False) else "Dry-Run"
+        if getattr(settings, "has_qiita", False):
+            try:
+                from automations.qiita.api import QiitaAPIClient
+                q_client = QiitaAPIClient(settings)
+                q_auth = "✅ Active & Configured" if q_client.verify_credentials() else "⚠️ Check Token"
+            except Exception:
+                q_auth = "⚠️ Check Token"
+
         status_msg = (
             f"📊 <b>[FREE-AUTOMATIONS SERVER STATUS]</b>\n\n"
             f"🧡 <b>Hacker News Engine:</b>\n"
@@ -225,6 +290,10 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             f"• 👤 <b>Creator:</b> <code>{i_user}</code>\n"
             f"• 🔐 <b>API v1:</b> {i_auth}\n"
             f"• 🚀 <b>Mode:</b> <code>{i_auto}</code>\n\n"
+            f"📗 <b>Qiita Engine:</b>\n"
+            f"• 👤 <b>Author:</b> <code>{q_user}</code>\n"
+            f"• 🔐 <b>API v2:</b> {q_auth}\n"
+            f"• 🚀 <b>Mode:</b> <code>{q_auto}</code>\n\n"
             f"⚙️ <b>Available Commands:</b>\n"
             f"• /run - Trigger full autonomous cycle\n"
             f"• /comment - Comment on popular & rising HN posts\n"
@@ -235,6 +304,10 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             f"• /itch_radar - Scan game jams (AI/Systems/Go/Rust)\n"
             f"• /itch_analytics - Track views/downloads/purchases\n"
             f"• /itch - Run complete itch.io cycle\n"
+            f"• /qiita_article - Generate/publish Tech Japanese article\n"
+            f"• /qiita_radar - Scan Qiita tags (#Python, #AI, #FastAPI, #Go, #Rust)\n"
+            f"• /qiita_analytics - Track LGTM, Stocks & Views\n"
+            f"• /qiita - Run complete Qiita cycle\n"
             f"• /hiring - Scan monthly Who is Hiring radar\n"
             f"• /status - View this live status report"
         )
@@ -243,16 +316,20 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
         help_text = (
             "🤖 <b>Free-Automations 100% Autonomous Server</b>\n\n"
             "Available Auto-Pilot commands (Zero Buttons Needed):\n"
-            "• /run - Trigger full autonomous cycle (HN + Tumblr + itch.io)\n"
+            "• /run - Trigger full autonomous cycle (HN + Tumblr + itch.io + Qiita)\n"
             "• /comment - Discover popular & rising posts and comment\n"
             "• /showcase - Autonomously publish Show HN post\n"
             "• /tumblr - Run Tumblr aesthetic tech post & curation\n"
             "• /itch - Run full itch.io devlog, jam radar & analytics\n"
+            "• /qiita - Run full Qiita article, tag radar & analytics\n"
+            "• /qiita_article - Publish Tech Japanese article\n"
+            "• /qiita_radar - Scan Python/AI/FastAPI/Go/Rust tags\n"
+            "• /qiita_analytics - Track LGTM, Stocks & Views\n"
             "• /itch_devlog - Publish systems/game tools devlog\n"
             "• /itch_radar - Scan AI/systems/tools game jams\n"
             "• /itch_analytics - View views, downloads & purchases\n"
             "• /hiring - Scan HN Who is Hiring & match remote roles\n"
-            "• /status - Live HN karma, Tumblr auth, itch.io status"
+            "• /status - Live HN karma, Tumblr auth, itch.io & Qiita status"
         )
         send_telegram_message(settings, help_text)
 
@@ -294,6 +371,10 @@ class AutomationHandler(BaseHTTPRequestHandler):
                     "POST /trigger/itch/radar",
                     "POST /trigger/itch/analytics",
                     "POST /trigger/itch/all",
+                    "POST /trigger/qiita/article",
+                    "POST /trigger/qiita/radar",
+                    "POST /trigger/qiita/analytics",
+                    "POST /trigger/qiita/all",
                     "POST /webhook",
                 ],
                 "time_utc": datetime.now(timezone.utc).isoformat(),
@@ -346,6 +427,14 @@ class AutomationHandler(BaseHTTPRequestHandler):
             action = "itch_analytics"
         elif path in ("/trigger/itch/all", "/trigger/itch", "/trigger_itch", "/itch"):
             action = "itch"
+        elif path in ("/trigger/qiita/article", "/trigger_qiita_article", "/qiita_article", "/trigger/qiita/publish"):
+            action = "qiita_article"
+        elif path in ("/trigger/qiita/radar", "/trigger_qiita_radar", "/qiita_radar", "/trigger/qiita/tags"):
+            action = "qiita_radar"
+        elif path in ("/trigger/qiita/analytics", "/trigger_qiita_analytics", "/qiita_analytics", "/trigger/qiita/stats"):
+            action = "qiita_analytics"
+        elif path in ("/trigger/qiita/all", "/trigger/qiita", "/trigger_qiita", "/qiita"):
+            action = "qiita"
         elif path in ("/webhook", "/telegram_webhook"):
             # Telegram Webhook endpoint - respond immediately with 200 OK
             self.send_response(200)
