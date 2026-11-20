@@ -118,6 +118,42 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
             logger.error("Error executing qiita_analytics: %s", exc)
             return False
 
+    # Handle Velog Actions
+    if action in ("velog", "velog_all", "velog_run"):
+        try:
+            from automations.velog import runner as velog_runner
+            is_forced = bool(extra and extra.get("force")) if extra else (action in ("velog", "velog_all"))
+            velog_runner.run_all(settings, force=is_forced)
+            return True
+        except Exception as exc:
+            logger.error("Error executing velog_all: %s", exc)
+            return False
+    elif action in ("velog_article", "velog_publish", "velog_post"):
+        try:
+            from automations.velog import runner as velog_runner
+            is_forced = bool(extra and extra.get("force")) if extra else False
+            velog_runner.run_article(settings, force=is_forced)
+            return True
+        except Exception as exc:
+            logger.error("Error executing velog_article: %s", exc)
+            return False
+    elif action in ("velog_radar", "velog_trend"):
+        try:
+            from automations.velog import runner as velog_runner
+            velog_runner.run_radar(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing velog_radar: %s", exc)
+            return False
+    elif action in ("velog_analytics", "velog_stats"):
+        try:
+            from automations.velog import runner as velog_runner
+            velog_runner.run_analytics(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing velog_analytics: %s", exc)
+            return False
+
     try:
         from automations.hn import runner
     except ImportError:
@@ -158,6 +194,12 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
                     qiita_runner.run_all(settings)
                 except Exception as q_exc:
                     logger.warning("Qiita cycle error during 'all' run: %s", q_exc)
+            if getattr(settings, "has_velog", False):
+                try:
+                    from automations.velog import runner as velog_runner
+                    velog_runner.run_all(settings)
+                except Exception as v_exc:
+                    logger.warning("Velog cycle error during 'all' run: %s", v_exc)
             return True
         elif hasattr(runner, "dispatch_action"):
             return runner.dispatch_action(action, settings, extra or {})
@@ -221,6 +263,18 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
     elif text.startswith("/qiita"):
         send_telegram_message(settings, "📗 <b>[Qiita Auto-Pilot Triggered]</b> Running full Qiita engine cycle...")
         _dispatch_automation_job("qiita", settings)
+    elif text.startswith("/velog_article") or text.startswith("/velog_post"):
+        send_telegram_message(settings, "📝 <b>[Velog Article Triggered]</b> Generating Tech Korean article...")
+        _dispatch_automation_job("velog_article", settings)
+    elif text.startswith("/velog_radar") or text.startswith("/velog_trend"):
+        send_telegram_message(settings, "🎯 <b>[Velog Radar Triggered]</b> Scanning Velog Tech Trend Radar...")
+        _dispatch_automation_job("velog_radar", settings)
+    elif text.startswith("/velog_analytics") or text.startswith("/velog_stats"):
+        send_telegram_message(settings, "📊 <b>[Velog Analytics Triggered]</b> Tracking Likes, Comments & Views...")
+        _dispatch_automation_job("velog_analytics", settings)
+    elif text.startswith("/velog"):
+        send_telegram_message(settings, "🚀 <b>[Velog Auto-Pilot Triggered]</b> Running full Velog engine cycle...")
+        _dispatch_automation_job("velog", settings)
     elif text.startswith("/status"):
         user_str = settings.hn_username or "Unconfigured"
         auto_str = "Active (Auto-Pilot)" if settings.hn_auto_publish else "Dry-Run"
@@ -276,6 +330,17 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             except Exception:
                 q_auth = "⚠️ Check Token"
 
+        v_user = getattr(settings, "velog_username", "") or "aman179102"
+        v_auth = "❌ Unconfigured"
+        v_auto = "Active (Auto-Pilot)" if getattr(settings, "velog_auto_publish", False) else "Dry-Run"
+        if getattr(settings, "has_velog", False):
+            try:
+                from automations.velog.api import VelogAPIClient
+                v_client = VelogAPIClient(settings)
+                v_auth = "✅ Active & Configured" if v_client.verify_credentials() else "⚠️ Check Token"
+            except Exception:
+                v_auth = "⚠️ Check Token"
+
         status_msg = (
             f"📊 <b>[FREE-AUTOMATIONS SERVER STATUS]</b>\n\n"
             f"🧡 <b>Hacker News Engine:</b>\n"
@@ -294,6 +359,10 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             f"• 👤 <b>Author:</b> <code>{q_user}</code>\n"
             f"• 🔐 <b>API v2:</b> {q_auth}\n"
             f"• 🚀 <b>Mode:</b> <code>{q_auto}</code>\n\n"
+            f"🚀 <b>Velog Engine:</b>\n"
+            f"• 👤 <b>Author:</b> <code>{v_user}</code>\n"
+            f"• 🔐 <b>GraphQL API:</b> {v_auth}\n"
+            f"• 🚀 <b>Mode:</b> <code>{v_auto}</code>\n\n"
             f"⚙️ <b>Available Commands:</b>\n"
             f"• /run - Trigger full autonomous cycle\n"
             f"• /comment - Comment on popular & rising HN posts\n"
@@ -308,6 +377,10 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             f"• /qiita_radar - Scan Qiita tags (#Python, #AI, #FastAPI, #Go, #Rust)\n"
             f"• /qiita_analytics - Track LGTM, Stocks & Views\n"
             f"• /qiita - Run complete Qiita cycle\n"
+            f"• /velog_article - Generate/publish Tech Korean article\n"
+            f"• /velog_radar - Scan Velog Tech Trend Radar\n"
+            f"• /velog_analytics - Track Likes, Comments & Views\n"
+            f"• /velog - Run complete Velog cycle\n"
             f"• /hiring - Scan monthly Who is Hiring radar\n"
             f"• /status - View this live status report"
         )
@@ -316,7 +389,7 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
         help_text = (
             "🤖 <b>Free-Automations 100% Autonomous Server</b>\n\n"
             "Available Auto-Pilot commands (Zero Buttons Needed):\n"
-            "• /run - Trigger full autonomous cycle (HN + Tumblr + itch.io + Qiita)\n"
+            "• /run - Trigger full autonomous cycle (HN + Tumblr + itch.io + Qiita + Velog)\n"
             "• /comment - Discover popular & rising posts and comment\n"
             "• /showcase - Autonomously publish Show HN post\n"
             "• /tumblr - Run Tumblr aesthetic tech post & curation\n"
@@ -325,11 +398,15 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             "• /qiita_article - Publish Tech Japanese article\n"
             "• /qiita_radar - Scan Python/AI/FastAPI/Go/Rust tags\n"
             "• /qiita_analytics - Track LGTM, Stocks & Views\n"
+            "• /velog - Run full Velog article, trend radar & analytics\n"
+            "• /velog_article - Publish Tech Korean article\n"
+            "• /velog_radar - Scan Velog tech trend radar\n"
+            "• /velog_analytics - Track Velog likes, comments & views\n"
             "• /itch_devlog - Publish systems/game tools devlog\n"
             "• /itch_radar - Scan AI/systems/tools game jams\n"
             "• /itch_analytics - View views, downloads & purchases\n"
             "• /hiring - Scan HN Who is Hiring & match remote roles\n"
-            "• /status - Live HN karma, Tumblr auth, itch.io & Qiita status"
+            "• /status - Live HN karma, Tumblr auth, itch.io, Qiita & Velog status"
         )
         send_telegram_message(settings, help_text)
 
@@ -375,6 +452,10 @@ class AutomationHandler(BaseHTTPRequestHandler):
                     "POST /trigger/qiita/radar",
                     "POST /trigger/qiita/analytics",
                     "POST /trigger/qiita/all",
+                    "POST /trigger/velog/article",
+                    "POST /trigger/velog/radar",
+                    "POST /trigger/velog/analytics",
+                    "POST /trigger/velog/all",
                     "POST /webhook",
                 ],
                 "time_utc": datetime.now(timezone.utc).isoformat(),
@@ -435,6 +516,14 @@ class AutomationHandler(BaseHTTPRequestHandler):
             action = "qiita_analytics"
         elif path in ("/trigger/qiita/all", "/trigger/qiita", "/trigger_qiita", "/qiita"):
             action = "qiita"
+        elif path in ("/trigger/velog/article", "/trigger_velog_article", "/velog_article", "/trigger/velog/publish"):
+            action = "velog_article"
+        elif path in ("/trigger/velog/radar", "/trigger_velog_radar", "/velog_radar", "/trigger/velog/trend"):
+            action = "velog_radar"
+        elif path in ("/trigger/velog/analytics", "/trigger_velog_analytics", "/velog_analytics", "/trigger/velog/stats"):
+            action = "velog_analytics"
+        elif path in ("/trigger/velog/all", "/trigger/velog", "/trigger_velog", "/velog"):
+            action = "velog"
         elif path in ("/webhook", "/telegram_webhook"):
             # Telegram Webhook endpoint - respond immediately with 200 OK
             self.send_response(200)

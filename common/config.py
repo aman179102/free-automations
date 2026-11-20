@@ -86,6 +86,12 @@ class Settings:
     qiita_username: str = ""
     qiita_auto_publish: bool = False
 
+    # Velog Official GraphQL Engine
+    velog_access_token: str = ""
+    velog_refresh_token: str = ""
+    velog_username: str = ""
+    velog_auto_publish: bool = False
+
     # Runtime & Paths
     timezone: str = "Asia/Kolkata"
     port: int = 10000
@@ -123,6 +129,11 @@ class Settings:
     def has_qiita(self) -> bool:
         """Returns True if Qiita access token is present."""
         return bool(self.qiita_access_token)
+
+    @property
+    def has_velog(self) -> bool:
+        """Returns True if Velog authentication cookies/tokens are present."""
+        return bool(self.velog_access_token or self.velog_refresh_token)
 
 
 def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
@@ -181,6 +192,14 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         raw_qiita_auto = os.getenv("QIITA_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
     qiita_auto_publish = bool(raw_qiita_auto)
 
+    velog_access_token = str(overrides.get("velog_access_token") or get_str("VELOG_ACCESS_TOKEN"))
+    velog_refresh_token = str(overrides.get("velog_refresh_token") or get_str("VELOG_REFRESH_TOKEN"))
+    velog_username = str(overrides.get("velog_username") or get_str("VELOG_USERNAME", default="aman179102"))
+    raw_velog_auto = overrides.get("velog_auto_publish")
+    if raw_velog_auto is None:
+        raw_velog_auto = os.getenv("VELOG_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
+    velog_auto_publish = bool(raw_velog_auto)
+
     tz_str = str(overrides.get("timezone") or get_str("TIMEZONE", default="Asia/Kolkata"))
     port = int(overrides.get("port") or int(os.getenv("PORT", "10000")))
     render_external_url = str(overrides.get("render_external_url") or get_str("RENDER_EXTERNAL_URL", default=""))
@@ -221,6 +240,10 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         qiita_access_token=qiita_access_token,
         qiita_username=qiita_username,
         qiita_auto_publish=qiita_auto_publish,
+        velog_access_token=velog_access_token,
+        velog_refresh_token=velog_refresh_token,
+        velog_username=velog_username,
+        velog_auto_publish=velog_auto_publish,
         timezone=tz_str,
         port=port,
         render_external_url=render_external_url,
