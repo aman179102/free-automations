@@ -92,6 +92,11 @@ class Settings:
     velog_username: str = ""
     velog_auto_publish: bool = False
 
+    # Dev.to Official Forem API v1 Engine
+    devto_api_key: str = ""
+    devto_username: str = ""
+    devto_auto_publish: bool = False
+
     # Runtime & Paths
     timezone: str = "Asia/Kolkata"
     port: int = 10000
@@ -134,6 +139,11 @@ class Settings:
     def has_velog(self) -> bool:
         """Returns True if Velog authentication cookies/tokens are present."""
         return bool(self.velog_access_token or self.velog_refresh_token)
+
+    @property
+    def has_devto(self) -> bool:
+        """Returns True if Dev.to API key is present."""
+        return bool(self.devto_api_key)
 
 
 def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
@@ -200,6 +210,13 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         raw_velog_auto = os.getenv("VELOG_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
     velog_auto_publish = bool(raw_velog_auto)
 
+    devto_api_key = str(overrides.get("devto_api_key") or get_str("DEVTO_API_KEY"))
+    devto_username = str(overrides.get("devto_username") or get_str("DEVTO_USERNAME", default="aman179102"))
+    raw_devto_auto = overrides.get("devto_auto_publish")
+    if raw_devto_auto is None:
+        raw_devto_auto = os.getenv("DEVTO_AUTO_PUBLISH", "false").lower() in ("true", "1", "yes")
+    devto_auto_publish = bool(raw_devto_auto)
+
     tz_str = str(overrides.get("timezone") or get_str("TIMEZONE", default="Asia/Kolkata"))
     port = int(overrides.get("port") or int(os.getenv("PORT", "10000")))
     render_external_url = str(overrides.get("render_external_url") or get_str("RENDER_EXTERNAL_URL", default=""))
@@ -244,6 +261,9 @@ def load_settings(overrides: dict[str, Any] | None = None) -> Settings:
         velog_refresh_token=velog_refresh_token,
         velog_username=velog_username,
         velog_auto_publish=velog_auto_publish,
+        devto_api_key=devto_api_key,
+        devto_username=devto_username,
+        devto_auto_publish=devto_auto_publish,
         timezone=tz_str,
         port=port,
         render_external_url=render_external_url,

@@ -40,6 +40,10 @@ def _cli_parser() -> argparse.ArgumentParser:
     group.add_argument("--velog-radar", action="store_true", help="Scan Velog tech trends & weekly trending radar")
     group.add_argument("--velog-analytics", action="store_true", help="Track Velog Likes, Comments, and Views with delta computation")
     group.add_argument("--velog-all", action="store_true", help="Run full suite of Velog automations and send consolidated digest")
+    group.add_argument("--devto-article", action="store_true", help="Generate/publish deep-dive technical article to Dev.to")
+    group.add_argument("--devto-radar", action="store_true", help="Scan Dev.to rising tech trend radar (#python, #architecture, #webdev, #ai, #devops)")
+    group.add_argument("--devto-analytics", action="store_true", help="Track Dev.to Page Views, Reactions, and Comments with delta computation")
+    group.add_argument("--devto-all", action="store_true", help="Run full suite of Dev.to automations and send consolidated digest")
     group.add_argument("--server", action="store_true", help="Launch lightweight HTTP health check and webhook server")
 
     parser.add_argument("--daemon", action="store_true", help="Run in continuous background loop")
@@ -192,9 +196,41 @@ def run_velog_action(
             res = velog_runner.run_all(settings, dry_run=dry_run, force=auto_publish)
         else:
             return False
-        return res.get("status") in ("success", "published", "skipped", "cooldown")
+        return res.get("status") in ("success", "published", "skipped", "cooldown", "dry_run")
     except Exception as exc:
         logger.error("Failed to execute Velog %s: %s", action, exc)
+        return False
+
+
+def run_devto_action(
+    action: str,
+    settings,
+    dry_run: bool = False,
+    auto_publish: bool = False,
+) -> bool:
+    """Invokes the Dev.to automation runner."""
+    try:
+        from automations.devto import runner as devto_runner
+    except ImportError as exc:
+        logger.error("Dev.to automation module not available: %s", exc)
+        print("⚠️  automations.devto is currently not installed or under construction.")
+        return False
+
+    try:
+        logger.info("Executing Dev.to action '%s' (dry_run=%s, auto_publish=%s)...", action, dry_run, auto_publish)
+        if action == "article":
+            res = devto_runner.run_article(settings, dry_run=dry_run, force=auto_publish)
+        elif action == "radar":
+            res = devto_runner.run_radar(settings, dry_run=dry_run)
+        elif action == "analytics":
+            res = devto_runner.run_analytics(settings, dry_run=dry_run)
+        elif action == "all":
+            res = devto_runner.run_all(settings, dry_run=dry_run, force=auto_publish)
+        else:
+            return False
+        return res.get("status") in ("success", "published", "skipped", "cooldown", "dry_run")
+    except Exception as exc:
+        logger.error("Failed to execute Dev.to %s: %s", action, exc)
         return False
 
 
@@ -310,6 +346,23 @@ def main() -> int:
 
     if args.velog_all:
         ok = run_velog_action("all", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    # 9. Dev.to commands
+    if args.devto_article:
+        ok = run_devto_action("article", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    if args.devto_radar:
+        ok = run_devto_action("radar", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    if args.devto_analytics:
+        ok = run_devto_action("analytics", settings, dry_run=args.dry_run, auto_publish=args.live)
+        return 0 if ok else 1
+
+    if args.devto_all:
+        ok = run_devto_action("all", settings, dry_run=args.dry_run, auto_publish=args.live)
         return 0 if ok else 1
 
     # Default if no arguments provided: print help

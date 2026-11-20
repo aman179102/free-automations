@@ -154,6 +154,42 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
             logger.error("Error executing velog_analytics: %s", exc)
             return False
 
+    # Handle Dev.to Actions
+    if action in ("devto", "devto_all", "devto_run"):
+        try:
+            from automations.devto import runner as devto_runner
+            is_forced = bool(extra and extra.get("force")) if extra else (action in ("devto", "devto_all"))
+            devto_runner.run_all(settings, force=is_forced)
+            return True
+        except Exception as exc:
+            logger.error("Error executing devto_all: %s", exc)
+            return False
+    elif action in ("devto_article", "devto_publish", "devto_post"):
+        try:
+            from automations.devto import runner as devto_runner
+            is_forced = bool(extra and extra.get("force")) if extra else False
+            devto_runner.run_article(settings, force=is_forced)
+            return True
+        except Exception as exc:
+            logger.error("Error executing devto_article: %s", exc)
+            return False
+    elif action in ("devto_radar", "devto_trend", "devto_tags"):
+        try:
+            from automations.devto import runner as devto_runner
+            devto_runner.run_radar(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing devto_radar: %s", exc)
+            return False
+    elif action in ("devto_analytics", "devto_stats"):
+        try:
+            from automations.devto import runner as devto_runner
+            devto_runner.run_analytics(settings)
+            return True
+        except Exception as exc:
+            logger.error("Error executing devto_analytics: %s", exc)
+            return False
+
     try:
         from automations.hn import runner
     except ImportError:
@@ -200,6 +236,12 @@ def _dispatch_automation_job(action: str, settings: Settings, extra: dict | None
                     velog_runner.run_all(settings)
                 except Exception as v_exc:
                     logger.warning("Velog cycle error during 'all' run: %s", v_exc)
+            if getattr(settings, "has_devto", False):
+                try:
+                    from automations.devto import runner as devto_runner
+                    devto_runner.run_all(settings)
+                except Exception as d_exc:
+                    logger.warning("Dev.to cycle error during 'all' run: %s", d_exc)
             return True
         elif hasattr(runner, "dispatch_action"):
             return runner.dispatch_action(action, settings, extra or {})
@@ -275,6 +317,18 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
     elif text.startswith("/velog"):
         send_telegram_message(settings, "🚀 <b>[Velog Auto-Pilot Triggered]</b> Running full Velog engine cycle...")
         _dispatch_automation_job("velog", settings)
+    elif text.startswith("/devto_article") or text.startswith("/devto_post"):
+        send_telegram_message(settings, "📝 <b>[Dev.to Article Triggered]</b> Generating technical article...")
+        _dispatch_automation_job("devto_article", settings)
+    elif text.startswith("/devto_radar") or text.startswith("/devto_trend"):
+        send_telegram_message(settings, "🎯 <b>[Dev.to Radar Triggered]</b> Scanning Dev.to Tech Trend Radar...")
+        _dispatch_automation_job("devto_radar", settings)
+    elif text.startswith("/devto_analytics") or text.startswith("/devto_stats"):
+        send_telegram_message(settings, "📊 <b>[Dev.to Analytics Triggered]</b> Tracking Page Views, Reactions & Comments...")
+        _dispatch_automation_job("devto_analytics", settings)
+    elif text.startswith("/devto"):
+        send_telegram_message(settings, "🚀 <b>[Dev.to Auto-Pilot Triggered]</b> Running full Dev.to engine cycle...")
+        _dispatch_automation_job("devto", settings)
     elif text.startswith("/status"):
         user_str = settings.hn_username or "Unconfigured"
         auto_str = "Active (Auto-Pilot)" if settings.hn_auto_publish else "Dry-Run"
@@ -341,6 +395,17 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             except Exception:
                 v_auth = "⚠️ Check Token"
 
+        d_user = getattr(settings, "devto_username", "") or "aman179102"
+        d_auth = "❌ Unconfigured"
+        d_auto = "Active (Auto-Pilot)" if getattr(settings, "devto_auto_publish", False) else "Dry-Run"
+        if getattr(settings, "has_devto", False):
+            try:
+                from automations.devto.api import DevtoAPIClient
+                d_client = DevtoAPIClient(settings)
+                d_auth = "✅ Active & Configured" if d_client.verify_credentials() else "⚠️ Check Token"
+            except Exception:
+                d_auth = "⚠️ Check Token"
+
         status_msg = (
             f"📊 <b>[FREE-AUTOMATIONS SERVER STATUS]</b>\n\n"
             f"🧡 <b>Hacker News Engine:</b>\n"
@@ -363,6 +428,10 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             f"• 👤 <b>Author:</b> <code>{v_user}</code>\n"
             f"• 🔐 <b>GraphQL API:</b> {v_auth}\n"
             f"• 🚀 <b>Mode:</b> <code>{v_auto}</code>\n\n"
+            f"👨‍💻 <b>Dev.to Engine:</b>\n"
+            f"• 👤 <b>Author:</b> <code>{d_user}</code>\n"
+            f"• 🔐 <b>Forem API v1:</b> {d_auth}\n"
+            f"• 🚀 <b>Mode:</b> <code>{d_auto}</code>\n\n"
             f"⚙️ <b>Available Commands:</b>\n"
             f"• /run - Trigger full autonomous cycle\n"
             f"• /comment - Comment on popular & rising HN posts\n"
@@ -381,6 +450,10 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             f"• /velog_radar - Scan Velog Tech Trend Radar\n"
             f"• /velog_analytics - Track Likes, Comments & Views\n"
             f"• /velog - Run complete Velog cycle\n"
+            f"• /devto_article - Generate/publish technical article\n"
+            f"• /devto_radar - Scan Dev.to Tech Trend Radar\n"
+            f"• /devto_analytics - Track Views, Reactions & Comments\n"
+            f"• /devto - Run complete Dev.to cycle\n"
             f"• /hiring - Scan monthly Who is Hiring radar\n"
             f"• /status - View this live status report"
         )
@@ -389,7 +462,7 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
         help_text = (
             "🤖 <b>Free-Automations 100% Autonomous Server</b>\n\n"
             "Available Auto-Pilot commands (Zero Buttons Needed):\n"
-            "• /run - Trigger full autonomous cycle (HN + Tumblr + itch.io + Qiita + Velog)\n"
+            "• /run - Trigger full autonomous cycle (HN + Tumblr + itch.io + Qiita + Velog + Dev.to)\n"
             "• /comment - Discover popular & rising posts and comment\n"
             "• /showcase - Autonomously publish Show HN post\n"
             "• /tumblr - Run Tumblr aesthetic tech post & curation\n"
@@ -402,11 +475,15 @@ def _handle_telegram_webhook_async(body_data: dict, settings: Settings) -> None:
             "• /velog_article - Publish Tech Korean article\n"
             "• /velog_radar - Scan Velog tech trend radar\n"
             "• /velog_analytics - Track Velog likes, comments & views\n"
+            "• /devto - Run full Dev.to article, trend radar & analytics\n"
+            "• /devto_article - Publish deep-dive technical article\n"
+            "• /devto_radar - Scan Dev.to tech trend radar\n"
+            "• /devto_analytics - Track Dev.to views, reactions & comments\n"
             "• /itch_devlog - Publish systems/game tools devlog\n"
             "• /itch_radar - Scan AI/systems/tools game jams\n"
             "• /itch_analytics - View views, downloads & purchases\n"
             "• /hiring - Scan HN Who is Hiring & match remote roles\n"
-            "• /status - Live HN karma, Tumblr auth, itch.io, Qiita & Velog status"
+            "• /status - Live HN karma, Tumblr auth, itch.io, Qiita, Velog & Dev.to status"
         )
         send_telegram_message(settings, help_text)
 
@@ -456,6 +533,10 @@ class AutomationHandler(BaseHTTPRequestHandler):
                     "POST /trigger/velog/radar",
                     "POST /trigger/velog/analytics",
                     "POST /trigger/velog/all",
+                    "POST /trigger/devto/article",
+                    "POST /trigger/devto/radar",
+                    "POST /trigger/devto/analytics",
+                    "POST /trigger/devto/all",
                     "POST /webhook",
                 ],
                 "time_utc": datetime.now(timezone.utc).isoformat(),
@@ -524,6 +605,14 @@ class AutomationHandler(BaseHTTPRequestHandler):
             action = "velog_analytics"
         elif path in ("/trigger/velog/all", "/trigger/velog", "/trigger_velog", "/velog"):
             action = "velog"
+        elif path in ("/trigger/devto/article", "/trigger_devto_article", "/devto_article", "/trigger/devto/publish"):
+            action = "devto_article"
+        elif path in ("/trigger/devto/radar", "/trigger_devto_radar", "/devto_radar", "/trigger/devto/trend"):
+            action = "devto_radar"
+        elif path in ("/trigger/devto/analytics", "/trigger_devto_analytics", "/devto_analytics", "/trigger/devto/stats"):
+            action = "devto_analytics"
+        elif path in ("/trigger/devto/all", "/trigger/devto", "/trigger_devto", "/devto"):
+            action = "devto"
         elif path in ("/webhook", "/telegram_webhook"):
             # Telegram Webhook endpoint - respond immediately with 200 OK
             self.send_response(200)
